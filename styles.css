@@ -388,6 +388,7 @@ a:focus-visible {
 
 .app-footer a { color: var(--muted); text-decoration: none; }
 .app-footer a:hover { color: var(--accent); }
+.github-icon { width: 14px; height: 14px; vertical-align: -2px; }
 
 .empty { color: var(--muted); }
 
