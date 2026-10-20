@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZapSurf</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <meta name="theme-color" content="#0e0f13">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <aside class="sidebar" id="sidebar">
+    <header class="sidebar-header">
+      <div class="title-row">
+        <h1>⚡ ZapSurf</h1>
+        <span id="controls-summary" class="controls-summary" hidden></span>
+        <button type="button" id="controls-toggle" class="chevron-button" aria-expanded="true" aria-controls="sidebar-controls" aria-label="Hide controls" title="Hide controls">
+          <span class="chevron" aria-hidden="true"></span>
+        </button>
+        <button type="button" id="sidebar-hide" class="chevron-button sidebar-hide" aria-controls="sidebar" aria-label="Hide sidebar" title="Hide sidebar">
+          <span class="chevron chevron-left" aria-hidden="true"></span>
+        </button>
+      </div>
+      <div id="sidebar-controls" class="sidebar-controls">
+        <div id="account" class="account"></div>
+        <button type="button" id="new-note" class="button new-note" hidden>✏️ New note</button>
+        <label class="feed-label" for="feed-select">Feed</label>
+        <select id="feed-select"></select>
+        <label class="feed-label sort-label" for="sort-select">Sort by</label>
+        <select id="sort-select"></select>
+      </div>
+      <p id="status" class="status" role="status"></p>
+    </header>
+    <ul id="note-list" class="note-list"></ul>
+  </aside>
+
+  <div class="main-pane">
+    <main id="main" class="main">
+      <p class="empty">Loading…</p>
+    </main>
+    <footer class="app-footer">
+      <a href="https://njump.me/nprofile1qqswvv3k5mvxz4ha6tfvh9nv5w7se3ze4rmuy9jt3srmafv3m5lgh4slvvje4" target="_blank" rel="noopener noreferrer">ZapSurf - By Layer1 Studio</a>
+    </footer>
+  </div>
+
+  <button type="button" id="sidebar-show" class="sidebar-fab" aria-controls="sidebar" aria-label="Show sidebar" title="Show sidebar" hidden>
+    <span aria-hidden="true">⚡</span>
+    <span class="chevron chevron-right" aria-hidden="true"></span>
+  </button>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <dialog id="login-dialog" class="modal">
+    <div class="dialog-header">
+      <h2>Log in</h2>
+      <button type="button" class="icon-button" id="login-close" aria-label="Close">✕</button>
+    </div>
+
+    <section class="login-option">
+      <h3>Browser extension</h3>
+      <p class="hint">Alby, nos2x, Nostr Connect and other NIP-07 extensions.</p>
+      <button type="button" class="button" id="login-extension">Log in with extension</button>
+    </section>
+
+    <section class="login-option">
+      <h3>Remote signer</h3>
+      <p class="hint">Amber, nsec.app and other NIP-46 signers. Stays connected after a reload.</p>
+      <form id="bunker-form" class="inline-form">
+        <input id="bunker-input" type="text" placeholder="bunker://… or name@nsec.app" autocomplete="off" spellcheck="false" required>
+        <button type="submit" class="button">Connect</button>
+      </form>
+      <button type="button" class="link-button" id="nostrconnect-show">Or scan a QR code with your signer app</button>
+      <div id="nostrconnect" class="qr-box" hidden>
+        <img id="nostrconnect-qr" alt="nostrconnect QR code" width="220" height="220">
+        <div class="inline-form">
+          <input id="nostrconnect-uri" type="text" readonly aria-label="nostrconnect URI">
+          <button type="button" class="button secondary" id="nostrconnect-copy">Copy</button>
+        </div>
+        <p class="hint">Waiting for your signer to approve…</p>
+      </div>
+    </section>
+
+    <section class="login-option">
+      <h3>Private key</h3>      <p class="hint">Encrypted with your password (NIP-49) and stored only in this browser. You'll enter the password once per session to post or zap.</p>
+      <form id="nsec-form" class="stacked-form">
+        <input id="nsec-input" type="password" placeholder="nsec1… or ncryptsec1…" autocomplete="off" spellcheck="false" required aria-label="Private key">
+        <input id="nsec-password" type="password" placeholder="Password (min. 8 characters)" autocomplete="new-password" minlength="8" required aria-label="Password">
+        <button type="submit" class="button">Encrypt and log in</button>
+      </form>
+    </section>
+
+    <section class="login-option">
+      <h3>Read-only</h3>
+      <p class="hint">Browse someone's feeds. Posting and zapping are disabled.</p>
+      <form id="readonly-form" class="inline-form">
+        <input id="readonly-input" type="text" placeholder="npub1… or name@domain.com" autocomplete="off" spellcheck="false" required aria-label="Public key or NIP-05">
+        <button type="submit" class="button">View</button>
+      </form>
+    </section>
+
+    <p id="login-error" class="form-error" role="alert"></p>
+  </dialog>
+
+  <dialog id="unlock-dialog" class="modal small">
+    <form id="unlock-form" class="stacked-form">
+      <h2 id="unlock-title">Unlock</h2>
+      <p id="unlock-message" class="hint"></p>
+      <input id="unlock-password" type="password" autocomplete="current-password" required aria-label="Password">
+      <div class="dialog-actions">
+        <button type="button" class="button secondary" id="unlock-cancel">Cancel</button>
+        <button type="submit" class="button">Unlock</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="compose-dialog" class="modal">
+    <div class="dialog-header">
+      <h2 id="compose-title">New note</h2>
+      <button type="button" class="icon-button" id="compose-close" aria-label="Close" data-keep-enabled="true">✕</button>
+    </div>
+    <div id="compose-context"></div>
+    <form id="compose-form">
+      <textarea id="compose-text" rows="6" placeholder="What's happening? Use #hashtags and paste npubs to mention people." aria-label="Note text"></textarea>
+      <div class="compose-footer">
+        <span id="compose-count" class="char-count"></span>
+        <span id="compose-status" class="form-status" role="status"></span>
+        <button type="submit" class="button">Post</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="zap-dialog" class="modal">
+    <div class="dialog-header">
+      <h2 id="zap-title">Zap</h2>
+      <button type="button" class="icon-button" id="zap-close" aria-label="Close" data-keep-enabled="true">✕</button>
+    </div>
+    <form id="zap-form" class="stacked-form">
+      <div id="zap-presets" class="presets"></div>
+      <label class="field">Amount (sats)
+        <input id="zap-amount" type="number" min="1" step="1" inputmode="numeric" required>
+      </label>
+      <label class="field">Comment (optional)
+        <input id="zap-comment" type="text" maxlength="280" placeholder="Great post ⚡">
+      </label>
+      <button type="submit" class="button">⚡ Zap</button>
+    </form>
+    <p id="zap-status" class="hint" role="status"></p>
+    <div id="zap-invoice" class="qr-box" hidden>
+      <img id="zap-qr" alt="Lightning invoice QR code" width="240" height="240">
+      <div class="inline-form">
+        <input id="zap-invoice-text" type="text" readonly aria-label="Lightning invoice" data-keep-enabled="true">
+        <button type="button" class="button secondary" id="zap-copy" data-keep-enabled="true">Copy</button>
+      </div>
+      <a id="zap-open-wallet" class="button secondary" href="#">Open in wallet app</a>
+    </div>
+  </dialog>
+
+  <dialog id="settings-dialog" class="modal">
+    <div class="dialog-header">
+      <h2>Settings</h2>
+      <button type="button" class="icon-button" id="settings-close" aria-label="Close">✕</button>
+    </div>
+    <section class="login-option">
+      <h3>Zap filter</h3>
+      <p class="hint">Only show notes and replies from people who zapped at least this many sats in the last 14 days. Set 0 to show everyone.</p>
+      <label class="threshold-row" for="min-zap-sats">
+        Min sats zapped
+        <input type="number" id="min-zap-sats" min="0" max="100000000" step="100" inputmode="numeric">
+      </label>
+      <label class="toggle-row">
+        <input type="checkbox" id="show-all-follows">
+        Home feed: show follows regardless of zaps
+      </label>
+    </section>
+    <section class="login-option">
+      <h3>One-tap zaps</h3>
+      <p class="hint">Tap ⚡ to zap this amount straight away. Hold or right-click ⚡ for other amounts.</p>
+      <select id="default-zap" aria-label="Default zap amount"></select>
+    </section>
+    <section class="login-option">
+      <h3>Wallet</h3>
+      <p id="wallet-status" class="hint"></p>
+      <form id="nwc-form" class="stacked-form">
+        <p class="hint">Paste a Nostr Wallet Connect string from Alby Hub, Primal, Coinos or similar. It is encrypted with your password and stored only in this browser. Set a spending budget in your wallet.</p>
+        <input id="nwc-uri" type="password" placeholder="nostr+walletconnect://…" autocomplete="off" spellcheck="false" required aria-label="Wallet connection string">
+        <input id="nwc-password" type="password" placeholder="Password (min. 8 characters)" autocomplete="new-password" minlength="8" required aria-label="Wallet password">
+        <button type="submit" class="button">Connect wallet</button>
+      </form>
+      <button type="button" id="nwc-disconnect" class="button secondary" hidden>Disconnect wallet</button>
+      <p id="nwc-status" class="form-error" role="alert"></p>
+    </section>
+  </dialog>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
