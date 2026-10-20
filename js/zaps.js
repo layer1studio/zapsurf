@@ -1,4 +1,5 @@
 import { nip57 } from './deps.js';
+import { getLnurlPay } from './lnurl.js';
 import { pool, DEFAULT_RELAYS, ZAP_PRESETS, ensureProfile, statsFor, actionsFor, settings } from './state.js';
 import { signEvent, getSession } from './signer.js';
 import { getWriteRelays } from './publish.js';
@@ -6,34 +7,7 @@ import { payInvoice, walletLabel } from './wallet.js';
 import { el, now, formatSats, emit } from './util.js';
 import { toast, setBusy } from './dialogs.js';
 
-const HTTP_TIMEOUT_MS = 10_000;
-const LUD16 = /^([a-z0-9._+-]+)@([a-z0-9.-]+\.[a-z]{2,})$/i;
 const BOLT11 = /^ln[a-z0-9]+$/i;
-
-async function fetchJson(url) {
-  if (new URL(url).protocol !== 'https:') throw new Error('Lightning address server must use https.');
-  const res = await fetch(url, { signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) });
-  if (!res.ok) throw new Error(`Lightning server returned HTTP ${res.status}.`);
-  const data = await res.json();
-  if (data?.status === 'ERROR') throw new Error(data.reason || 'Lightning server error.');
-  return data;
-}
-
-async function getLnurlPay(profile) {
-  if (profile.lud16) {
-    const match = LUD16.exec(profile.lud16.trim());
-    if (!match) throw new Error(`${profile.name} has an invalid Lightning address.`);
-    const data = await fetchJson(`https://${match[2]}/.well-known/lnurlp/${encodeURIComponent(match[1])}`);
-    if (!data.allowsNostr || !data.nostrPubkey) throw new Error(`${profile.name}'s wallet does not accept nostr zaps.`);
-    return data;
-  }
-  if (profile.lud06 && profile.event) {
-    const callback = await nip57.getZapEndpoint(profile.event);
-    if (!callback) throw new Error(`${profile.name}'s wallet does not accept nostr zaps.`);
-    return { callback, minSendable: 1, maxSendable: Number.MAX_SAFE_INTEGER };
-  }
-  throw new Error(`${profile.name} has no Lightning address.`);
-}
 
 export async function requestZapInvoice(note, sats, comment) {
   const profile = await ensureProfile(note.pubkey);

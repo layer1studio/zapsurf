@@ -97,6 +97,17 @@ body.sidebar-hidden .main { padding-top: 72px; }
   font-size: 18px;
 }
 
+.brand-home {
+  padding: 0;
+  background: none;
+  color: inherit;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.brand-home:hover { color: var(--accent); }
+
 .title-row {
   display: flex;
   align-items: center;
@@ -500,11 +511,12 @@ a:focus-visible {
   border-radius: 10px;
   font: inherit;
   text-align: left;
-  cursor: pointer;
 }
 
 .profile-note:hover { border-color: var(--accent); }
-.profile-note .note-preview { color: var(--text); -webkit-line-clamp: 4; }
+.profile-note-content { margin-bottom: 8px; }
+.profile-note-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
+.profile-note-footer .item-stats { flex: 1 1 100%; margin-top: 0; }
 
 .load-more {
   padding: 16px;

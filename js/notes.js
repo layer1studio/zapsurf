@@ -73,16 +73,21 @@ export async function loadHomeItems(pubkey, before = null, onProgress = () => {}
   const since = until - HOME_WINDOW_HOURS * 3600;
 
   const queries = [];
-  let done = 0;
   for (const [relay, pks] of plan) {
     for (const batch of chunk(pks, 250)) {
       queries.push(pool.querySync([relay], { kinds: [1, 6], authors: batch, since, until, limit: RELAY_LIMIT }, { maxWait: QUERY_WAIT_MS })
-        .catch(() => [])
-        .finally(() => onProgress(`Loading notes from ${plan.size} relays (${++done}/${queries.length} done)…`)));
+        .catch(() => []));
     }
   }
-  onProgress(`Loading notes from ${plan.size} relays (0/${queries.length} done)…`);
-  const results = await Promise.all(queries);
+  const receivedEventIds = new Set();
+  let done = 0;
+  onProgress(`Loading notes from ${plan.size} relays (0/${queries.length} queries done; 0 events received)…`);
+  const results = await Promise.all(queries.map(async query => {
+    const events = await query;
+    for (const event of events) if (event.id) receivedEventIds.add(event.id);
+    onProgress(`Loading notes from ${plan.size} relays (${++done}/${queries.length} queries done; ${receivedEventIds.size} events received)…`);
+    return events;
+  }));
   // A relay that hit its limit only covers back to its oldest event; stop there so pages have no gaps.
   let cursor = since;
   for (const batch of results) {
@@ -177,13 +182,14 @@ async function interactionRelays(note, self) {
   return uniqueRelays(lists.get(note.pubkey).read.slice(0, 4), self ? lists.get(self).read.slice(0, 2) : [], DEFAULT_RELAYS);
 }
 
-export async function loadThread(note, self) {
+export async function loadThread(note, self, onReplies = () => {}) {
   const relays = await interactionRelays(note, self);
   const events = await pool.querySync(relays, { kinds: [1, 6, 7, 9735], '#e': [note.id], limit: 1500 }, { maxWait: QUERY_WAIT_MS });
   const unique = [...new Map(events.map(ev => [ev.id, ev])).values()];
   const replies = unique
     .filter(ev => ev.kind === 1 && isDirectReplyTo(ev, note.id))
     .sort((a, b) => a.created_at - b.created_at);
+  onReplies(replies);
   applyInteractions(unique, [note.id], self);
 
   const replyIds = replies.map(r => r.id);

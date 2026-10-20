@@ -2,6 +2,10 @@
 
 ZapSurf is a browser-based Nostr client built to create a higher-signal feed with less bot and AI noise. It uses authors' recent outgoing Lightning zap activity to help distinguish active participants from low-signal accounts.
 
+## Versioning
+
+The current version is recorded in [`VERSION`](VERSION). Releases follow semantic versioning: increment the patch number for fixes, the minor number for backward-compatible features, and the major number for breaking changes. See [`CHANGELOG.md`](CHANGELOG.md) for release notes.
+
 ## Run locally
 
 You need Node.js/npm and an internet connection. From the repository root, start a static server:
@@ -14,9 +18,9 @@ Then open <http://127.0.0.1:8080>. ZapSurf loads its Nostr libraries from `esm.s
 
 ## High-signal feed filter
 
-ZapSurf checks Nostr zap receipts from the last 14 days and totals the sats each note author has sent. By default, a note or reply is visible when its author has sent at least 100 sats during that period. The filter uses the author's outgoing zap activity, not zaps received by the note or the signed-in reader's own zap history. Your own notes always pass the filter.
+ZapSurf checks Nostr zap receipts from the last 14 days and totals validated outgoing sats for each note author. A receipt counts only when its signature verifies against the recipient's LNURL provider key, its embedded zap request is valid and signed by the sender, and its invoice amount matches the request. Zaps to the sender's own pubkey do not count. By default, a note or reply is visible when its author has sent at least 100 sats during that period. The filter uses outgoing zap activity, not zaps received by the note or the signed-in reader's own zap history. Your own notes always pass the filter.
 
-Zap activity is a signal, not proof that an account is human or that its posts are high quality. This heuristic can hide genuine users and does not guarantee that bot or AI accounts will be excluded.
+Zap activity is a signal, not proof that an account is human or that its posts are high quality. Receipts rely on the recipient's LNURL provider and cannot independently prove payment; a dishonest provider can still issue false receipts. Profiles without usable LNURL zap metadata will not contribute to the filter. This heuristic can hide genuine users and does not guarantee that bot or AI accounts will be excluded.
 
 Set the minimum to 0 in Settings to show everyone. In the Home feed, you can also choose to show all followed accounts regardless of their zap activity. Replies use the same author-based filter.
 

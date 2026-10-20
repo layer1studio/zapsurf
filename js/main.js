@@ -16,7 +16,6 @@ import { el, isDirectReplyTo, now, store, formatSats, safeHttpUrl } from './util
 const SORT_KEY = 'zs-sort';
 const stat = key => item => statsFor(item.note.id)[key];
 const SORTS = [
-  { id: 'feed', label: 'Feed order' },
   { id: 'newest', label: 'Newest', score: item => item.note.created_at },
   { id: 'sats', label: 'Most sats zapped', score: stat('satszapped'), needsStats: true },
   { id: 'zaps', label: 'Most zaps', score: stat('zaps'), needsStats: true },
@@ -36,12 +35,10 @@ const SORTS = [
 const sortSelect = document.getElementById('sort-select');
 const currentSort = () => SORTS.find(s => s.id === sortSelect.value) || SORTS[0];
 
-// Home is already newest-first, so "Feed order" would just duplicate "Newest" there.
-function renderSortOptions(isHome) {
-  const options = isHome ? SORTS.filter(s => s.id !== 'feed') : SORTS;
+function renderSortOptions() {
   const saved = store.get(SORT_KEY);
-  sortSelect.replaceChildren(...options.map(sort => el('option', { value: sort.id }, sort.label)));
-  sortSelect.value = options.some(s => s.id === saved) ? saved : options[0].id;
+  sortSelect.replaceChildren(...SORTS.map(sort => el('option', { value: sort.id }, sort.label)));
+  sortSelect.value = SORTS.some(sort => sort.id === saved) ? saved : SORTS[0].id;
 }
 
 function sortItems(items) {
@@ -75,7 +72,7 @@ let profileToken = 0;
 
 const passesFilter = pubkey => isOwn(pubkey) || cachedZapSats(pubkey) >= settings.minZapSats;
 
-const thresholdText = () => `zapped ${formatSats(settings.minZapSats)}+ sats in the last 14 days`;
+const thresholdText = () => `sent ${formatSats(settings.minZapSats)}+ sats in the last 14 days`;
 
 // ---------- Profiles & following ----------
 
@@ -143,12 +140,16 @@ function backToNote() {
 }
 
 function profileNoteCard(note, zaps) {
-  return el('button', {
-    type: 'button', class: 'profile-note',
-    onclick: () => showNote({ note, zaps })
-  },
-  el('div', { class: 'note-preview' }, note.content.slice(0, 400)),
-  timeEl(note.created_at));
+  return el('article', { class: 'profile-note' },
+    renderContent(note.content, 'note-content profile-note-content'),
+    el('div', { class: 'profile-note-footer' },
+      timeEl(note.created_at),
+      itemStats(note.id),
+      el('button', {
+        type: 'button',
+        class: 'link-button',
+        onclick: () => showNote({ note, zaps })
+      }, 'Open note')));
 }
 
 async function showProfile(pubkey) {
@@ -210,6 +211,9 @@ async function showProfile(pubkey) {
   try {
     const notes = await loadProfileNotes(pubkey);
     if (token !== profileToken) return;
+    notesEl.replaceChildren(el('p', { class: 'replies-status busy' }, 'Loading interaction counts…'));
+    await loadNoteStats(notes, getSession()?.pubkey);
+    if (token !== profileToken) return;
     notesEl.replaceChildren(
       el('h2', { class: 'replies-heading' }, `Recent notes (${notes.length})`),
       ...(notes.length ? notes.map(note => profileNoteCard(note, zaps)) : [el('p', { class: 'replies-status' }, 'No recent notes found on their relays.')]));
@@ -234,28 +238,45 @@ function replyItem(reply, zaps) {
 
 function renderReplies() {
   if (!openThread?.replies) return;
-  const { replies, counts, container } = openThread;
-  const visible = replies.filter(r => passesFilter(r.pubkey));
+  const { replies, counts, container, showAllReplies } = openThread;
+  const visible = showAllReplies ? replies : replies.filter(r => passesFilter(r.pubkey));
   const hidden = replies.length - visible.length;
+  const hiddenStatus = hidden ? el('p', { class: 'replies-status' },
+    `${hidden} ${hidden === 1 ? 'reply' : 'replies'} hidden from people who haven't ${thresholdText()}. `,
+    el('button', {
+      type: 'button',
+      class: 'link-button',
+      onclick: () => {
+        openThread.showAllReplies = true;
+        renderReplies();
+      }
+    }, 'Show anyway')) : null;
   container.replaceChildren(
     el('h2', { class: 'replies-heading' }, `Replies (${visible.length})`),
-    ...(hidden ? [el('p', { class: 'replies-status' }, `${hidden} ${hidden === 1 ? 'reply' : 'replies'} hidden from people who haven't ${thresholdText()}.`)] : []),
+    ...(hiddenStatus ? [hiddenStatus] : []),
     ...visible.map(reply => replyItem(reply, counts.get(reply.pubkey) || 0)));
 }
 
 async function loadThread(note, container) {
   const token = ++threadToken;
-  openThread = { noteId: note.id, container };
+  openThread = { noteId: note.id, container, showAllReplies: false };
   const progress = el('p', { class: 'replies-status busy' }, 'Loading replies, likes and zaps from relays…');
   container.replaceChildren(progress, skeletonReply(), skeletonReply());
   try {
-    const replies = await fetchThread(note, getSession()?.pubkey);
-    if (token !== threadToken) return;
-    const repliers = [...new Set(replies.map(r => r.pubkey))];
-    progress.textContent = `Found ${replies.length} replies. Checking zap history for ${repliers.length} people…`;
-    const counts = await countRecentZapsSent(repliers, (done, total) => {
-      if (token === threadToken) progress.textContent = `Found ${replies.length} replies. Checking zap history: ${done}/${total} people…`;
+    let zapCountsPromise;
+    const replies = await fetchThread(note, getSession()?.pubkey, loadedReplies => {
+      if (token !== threadToken) return;
+      const repliers = [...new Set(loadedReplies.map(reply => reply.pubkey))];
+      progress.textContent = `Found ${loadedReplies.length} replies. Loading zap receipts for ${repliers.length} people…`;
+      zapCountsPromise = countRecentZapsSent(repliers, (done, total, stage) => {
+        if (token !== threadToken || !progress.isConnected) return;
+        progress.textContent = stage === 'fetching'
+          ? `Found ${loadedReplies.length} replies. Loading zap receipts for ${total} people…`
+          : `Found ${loadedReplies.length} replies. Checking zap history: ${done}/${total} people…`;
+      });
     });
+    if (token !== threadToken) return;
+    const counts = await zapCountsPromise;
     if (token !== threadToken) return;
     Object.assign(openThread, { replies, counts });
     renderReplies();
@@ -368,7 +389,7 @@ const dateLabel = seconds => new Date(seconds * 1000).toLocaleDateString(undefin
 
 function renderLoadMore() {
   moreObserver?.disconnect();
-  if (!lastResult?.isHome) return;
+  if (!lastResult?.isHome || lastResult.loading) return;
   const { exhausted, failed, cursor } = lastResult;
   const text = exhausted
     ? `That's everything back to ${dateLabel(cursor)}.`
@@ -395,8 +416,10 @@ async function loadMore() {
     });
     const known = new Set(result.items.map(item => item.note.id));
     const fresh = page.items.filter(item => !known.has(item.note.id));
-    const counts = await countRecentZapsSent([...new Set(fresh.map(item => item.note.pubkey))], (done, total) => {
-      if (sentinel()) sentinel().textContent = `Older notes: checking zap history ${done}/${total}…`;
+    const counts = await countRecentZapsSent([...new Set(fresh.map(item => item.note.pubkey))], (done, total, stage) => {
+      if (sentinel()) sentinel().textContent = stage === 'fetching'
+        ? `Older notes: loading zap receipts for ${total} authors…`
+        : `Older notes: checking zap history ${done}/${total}…`;
     });
     if (result !== lastResult) return;
     for (const item of fresh) item.zaps = counts.get(item.note.pubkey);
@@ -432,20 +455,28 @@ async function refreshStats() {
 
 function applyFilter() {
   if (!lastResult) return;
-  const { items, isHome, fallback } = lastResult;
+  const { items, isHome, fallback, verifiedAuthors, zapCheckComplete, zapStage, authorCount } = lastResult;
+  const readyItems = verifiedAuthors && !zapCheckComplete
+    ? items.filter(item => verifiedAuthors.has(item.note.pubkey))
+    : items;
   const filterOn = !isHome || !settings.showAllFollows;
-  const filtered = filterOn ? items.filter(item => passesFilter(item.note.pubkey)) : items;
+  const filtered = filterOn ? readyItems.filter(item => passesFilter(item.note.pubkey)) : readyItems;
   const shown = sortItems(filtered);
   const counting = currentSort().needsStats && items.some(item => !item.hasStats);
-  const badged = items.filter(i => i.zaps > 0 && cachedZapSats(i.note.pubkey) >= settings.minZapSats).length;
+  const badged = readyItems.filter(i => i.zaps > 0 && cachedZapSats(i.note.pubkey) >= settings.minZapSats).length;
+  const progressText = zapCheckComplete ? '' : zapStage === 'fetching'
+    ? ` Loading zap receipts for ${authorCount} authors…`
+    : ` Checking zap history: ${verifiedAuthors?.size || 0}/${authorCount} authors…`;
   setStatus((filterOn
-    ? `${shown.length} of ${items.length} notes are from authors who have ${thresholdText()}.`
-    : `${items.length} notes from people you follow. ${badged} have the zapper badge.`)
+    ? `${shown.length} of ${zapCheckComplete ? items.length : readyItems.length} notes are from authors who have ${thresholdText()}.`
+    : `${readyItems.length} notes from people you follow. ${badged} have the zapper badge.`)
+    + progressText
     + (counting ? ' Counting zaps and replies…' : '')
     + (fallback ? ' Primal is unavailable, so notes are ranked from relays.' : ''), counting);
+  if (!shown.length && !zapCheckComplete && !selectedNoteId) return;
   renderList(shown, isHome
-    ? 'No recent notes from people you follow match this filter.'
-    : 'No trending notes from verified zappers in this feed.');
+    ? zapCheckComplete ? 'No recent notes from people you follow match this filter.' : 'Checking zap history for more notes…'
+    : zapCheckComplete ? 'No trending notes from verified zappers in this feed.' : 'Checking zap history for more notes…');
 }
 
 async function loadFeed(feedId) {
@@ -459,7 +490,7 @@ async function loadFeed(feedId) {
   profileOpen = null;
   profileToken++;
   moreObserver?.disconnect();
-  renderSortOptions(isHome);
+  renderSortOptions();
   listEl.replaceChildren(...Array.from({ length: 6 }, skeletonItem));
   const firstStep = isHome
     ? 'Loading notes from the relays your follows publish to…'
@@ -486,12 +517,33 @@ async function loadFeed(feedId) {
     }
     if (token !== loadToken) return;
     const authors = [...new Set(items.map(item => item.note.pubkey))];
-    progress(`Got ${items.length} notes. Checking zap history for ${authors.length} authors…`);
-    const counts = await countRecentZapsSent(authors, (done, total) =>
-      progress(`Got ${items.length} notes. Checking zap history: ${done}/${total} authors…`));
+    const result = {
+      items,
+      isHome,
+      cursor,
+      fallback: !isHome && source !== 'Primal',
+      verifiedAuthors: new Set(),
+      zapCheckComplete: false,
+      zapStage: 'fetching',
+      authorCount: authors.length,
+      loading: true
+    };
+    lastResult = result;
+    const counts = await countRecentZapsSent(authors, (done, total, stage, author) => {
+      if (token !== loadToken || result !== lastResult) return;
+      result.zapStage = stage;
+      if (author) {
+        result.verifiedAuthors.add(author);
+        for (const item of items) {
+          if (item.note.pubkey === author) item.zaps = cachedZapCount(author);
+        }
+      }
+      applyFilter();
+    });
     if (token !== loadToken) return;
     for (const item of items) item.zaps = counts.get(item.note.pubkey);
-    lastResult = { items, isHome, cursor, fallback: !isHome && source !== 'Primal' };
+    result.zapCheckComplete = true;
+    result.loading = false;
     applyFilter();
     refreshStats();
   } catch (err) {
@@ -650,6 +702,12 @@ controlsToggle.addEventListener('click', () => setControlsCollapsed(!controlsEl.
 feedSelect.addEventListener('change', updateControlsSummary);
 sortSelect.addEventListener('change', updateControlsSummary);
 document.addEventListener('zs:session', updateControlsSummary);
+document.getElementById('home-button').addEventListener('click', () => {
+  const homeId = getSession() ? HOME_FEED.id : DEFAULT_FEED_ID;
+  feedSelect.value = homeId;
+  updateControlsSummary();
+  loadFeed(homeId);
+});
 
 // ---------- Slide-out sidebar ----------
 

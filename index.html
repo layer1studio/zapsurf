@@ -12,7 +12,7 @@
   <aside class="sidebar" id="sidebar">
     <header class="sidebar-header">
       <div class="title-row">
-        <h1>⚡ ZapSurf</h1>
+        <h1><button type="button" id="home-button" class="brand-home" title="Home" aria-label="ZapSurf home">⚡ ZapSurf</button></h1>
         <span id="controls-summary" class="controls-summary" hidden></span>
         <button type="button" id="controls-toggle" class="chevron-button" aria-expanded="true" aria-controls="sidebar-controls" aria-label="Hide controls" title="Hide controls">
           <span class="chevron" aria-hidden="true"></span>
@@ -163,7 +163,7 @@
     </div>
     <section class="login-option">
       <h3>Zap filter</h3>
-      <p class="hint">Only show notes and replies from people who zapped at least this many sats in the last 14 days. Set 0 to show everyone.</p>
+      <p class="hint">Only show notes and replies from people who sent at least this many sats in validated zaps to other accounts in the last 14 days. Set 0 to show everyone.</p>
       <label class="threshold-row" for="min-zap-sats">
         Min sats zapped
         <input type="number" id="min-zap-sats" min="0" max="100000000" step="100" inputmode="numeric">

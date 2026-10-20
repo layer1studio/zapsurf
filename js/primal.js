@@ -98,7 +98,10 @@ function connect() {
       const req = pending.get(msg[1]);
       if (!req) return;
       if (msg[0] === 'EVENT' && msg[2]) {
-        if (!absorbMeta(msg[2]) && msg[2].id) req.events.set(msg[2].id, msg[2]);
+        if (!absorbMeta(msg[2]) && msg[2].id && !req.events.has(msg[2].id)) {
+          req.events.set(msg[2].id, msg[2]);
+          if (msg[2].kind === 1) req.onNoteCount([...req.events.values()].filter(event => event.kind === 1).length);
+        }
       } else if (msg[0] === 'EOSE') {
         settle(msg[1]);
       } else if (msg[0] === 'NOTICE' || msg[0] === 'CLOSED') {
@@ -109,13 +112,13 @@ function connect() {
   return opening;
 }
 
-async function primalRequest(cache) {
+async function primalRequest(cache, onNoteCount = () => {}) {
   await connect();
   clearTimeout(idleTimer);
   const subId = `zs-${Math.random().toString(36).slice(2)}`;
   return new Promise((resolve, reject) => {
     pending.set(subId, {
-      events: new Map(), resolve, reject,
+      events: new Map(), resolve, reject, onNoteCount,
       timer: setTimeout(() => settle(subId, new Error('Primal timed out')), REQUEST_TIMEOUT_MS)
     });
     socket.send(JSON.stringify(['REQ', subId, { cache }]));
@@ -124,18 +127,23 @@ async function primalRequest(cache) {
 
 // ---------- Relay fallback ----------
 
-async function relayRankedNotes(feed) {
+async function relayRankedNotes(feed, onProgress) {
   const since = hoursAgo(Math.min(feed.hours || 24, 24));
+  onProgress('Loading recent notes from relays…');
   const notes = (await pool.querySync(DEFAULT_RELAYS, { kinds: [1], since, limit: 500 }, { maxWait: 8000 }))
     .filter(note => !isReply(note));
   const scores = new Map(notes.map(n => [n.id, 0]));
   const weights = feed.zapsOnly ? { 9735: 1 } : { 7: 1, 6: 2, 1: 2, 9735: 3 };
-  for (const ids of chunk([...scores.keys()], 100)) {
+  const batches = chunk([...scores.keys()], 100);
+  let done = 0;
+  onProgress(`Found ${notes.length} notes. Ranking interactions from relays (0/${batches.length} batches)…`);
+  for (const ids of batches) {
     const interactions = await pool.querySync(DEFAULT_RELAYS, { kinds: [7, 6, 1, 9735], '#e': ids, since, limit: 2000 }, { maxWait: 8000 }).catch(() => []);
     for (const ev of interactions) {
       const target = ev.tags.filter(t => t[0] === 'e').pop()?.[1];
       if (scores.has(target)) scores.set(target, scores.get(target) + (weights[ev.kind] || 0));
     }
+    onProgress(`Ranking interactions from relays (${++done}/${batches.length} batches)…`);
   }
   return notes
     .filter(n => scores.get(n.id) > 0)
@@ -154,7 +162,8 @@ export async function loadTrendingItems(feed, pubkey, onProgress = () => {}) {
 
   let result;
   try {
-    const events = await primalRequest(feed.cache(pubkey));
+    const events = await primalRequest(feed.cache(pubkey), count =>
+      onProgress(`Loading ${feed.label.toLowerCase()} from Primal (${count} notes received)…`));
     const notes = events.filter(ev => ev.kind === 1);
     if (notes.length === 0) throw new Error('Primal returned no notes');
     result = { items: notes.map(note => ({ note, hasStats: true })), source: 'Primal' };
@@ -162,7 +171,7 @@ export async function loadTrendingItems(feed, pubkey, onProgress = () => {}) {
     if (feed.personal) throw err;
     console.warn('Primal trending failed, ranking from relays instead', err);
     onProgress('Primal is unavailable. Ranking recent notes from relays instead…');
-    const notes = await relayRankedNotes(feed);
+    const notes = await relayRankedNotes(feed, onProgress);
     result = { items: notes.map(note => ({ note })), source: 'relays' };
   }
   feedCache.set(key, { at: Date.now(), result });
