@@ -60,5 +60,11 @@ export async function validateZapReceipt(receipt, expectedSender, {
   if (invoiceMsats !== amountMsats || !/^[0-9a-f]{64}$/i.test(providerPubkey || '')) return null;
   if (receipt.pubkey?.toLowerCase() !== providerPubkey.toLowerCase()) return null;
 
-  return { sender, recipient, amountMsats, sats: amountMsats / 1000 };
+  return {
+    sender,
+    recipient,
+    amountMsats,
+    sats: amountMsats / 1000,
+    comment: typeof request.content === 'string' ? request.content : ''
+  };
 }

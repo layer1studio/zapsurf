@@ -4,7 +4,7 @@ const HTTP_TIMEOUT_MS = 10_000;
 const LUD16 = /^([a-z0-9._+-]+)@([a-z0-9.-]+\.[a-z]{2,})$/i;
 const HEX_PUBKEY = /^[0-9a-f]{64}$/i;
 
-async function fetchJson(url) {
+export async function fetchJson(url) {
   if (new URL(url).protocol !== 'https:') throw new Error('Lightning address server must use https.');
   const res = await fetch(url, { signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`Lightning server returned HTTP ${res.status}.`);

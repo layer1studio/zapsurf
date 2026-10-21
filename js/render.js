@@ -1,5 +1,5 @@
 import { nip19 } from './deps.js';
-import { parseProfile, settings } from './state.js';
+import { ensureProfile, parseProfile, settings } from './state.js';
 import { cachedZapSats } from './zapcount.js';
 import { el, safeHttpUrl, formatSats, emit } from './util.js';
 
@@ -32,12 +32,25 @@ export function timeEl(createdAt) {
   return el('time', { class: 'note-time', datetime: time.toISOString() }, time.toLocaleString());
 }
 
-const TOKEN_RE = /(https?:\/\/[^\s<>"']+)|nostr:((?:npub|nprofile|note|nevent|naddr)1[02-9ac-hj-np-z]+)/gi;
+const TOKEN_RE = /(https?:\/\/[^\s<>"']+)|nostr:((?:npub|nprofile|note|nevent|naddr)1[02-9ac-hj-np-z]+)|(?<![a-z0-9])((?:npub|nprofile)1[02-9ac-hj-np-z]+)(?![a-z0-9])/gi;
 const IMAGE_RE = /\.(jpe?g|png|gif|webp|avif)$/i;
 const VIDEO_RE = /\.(mp4|webm|mov|m4v)$/i;
+const profileLookups = new Map();
+const linkPreviewCache = new Map();
+const LINK_PREVIEW_TTL_MS = 10 * 60 * 1000;
+const MAX_LINK_PREVIEWS = 4;
 
-export function renderContent(text, className = 'note-content') {
+function loadMentionProfile(pubkey) {
+  if (!profileLookups.has(pubkey)) {
+    const lookup = ensureProfile(pubkey).finally(() => profileLookups.delete(pubkey));
+    profileLookups.set(pubkey, lookup);
+  }
+  return profileLookups.get(pubkey);
+}
+
+export function renderContent(text, className = 'note-content', { linkPreviews = false } = {}) {
   const container = el('div', { class: className });
+  let previewCount = 0;
   let last = 0;
   for (const match of text.matchAll(TOKEN_RE)) {
     container.append(text.slice(last, match.index));
@@ -54,13 +67,83 @@ export function renderContent(text, className = 'note-content') {
         container.append(el('video', { src: href, controls: true, preload: 'metadata', playsinline: true, referrerpolicy: 'no-referrer' }));
       } else {
         container.append(el('a', { href, target: '_blank', rel: 'noopener noreferrer' }, trimmed));
+        if (linkPreviews && previewCount < MAX_LINK_PREVIEWS && isPreviewableLink(href)) {
+          container.append(createLinkPreview(href));
+          previewCount++;
+        }
       }
     } else {
-      container.append(renderNostrRef(match[2]));
+      container.append(renderNostrRef(match[2] || match[3]));
     }
   }
   container.append(text.slice(last));
   return container;
+}
+
+function isPreviewableLink(href) {
+  try {
+    const url = new URL(href);
+    const hostname = url.hostname.toLowerCase();
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return false;
+    if (hostname.includes(':') || hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local') || hostname.endsWith('.internal')) return false;
+    const octets = hostname.split('.').map(Number);
+    if (octets.length === 4 && octets.every(Number.isInteger)) {
+      const [first, second] = octets;
+      if (first === 0 || first === 10 || first === 127 || (first === 169 && second === 254) ||
+          (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function fetchLinkPreview(href) {
+  const cached = linkPreviewCache.get(href);
+  if (cached && Date.now() - cached.createdAt < LINK_PREVIEW_TTL_MS) return cached.promise;
+  const fallback = { title: new URL(href).hostname, description: '', image: '' };
+  const endpoint = new URL('https://api.microlink.io/');
+  endpoint.searchParams.set('url', href);
+  endpoint.searchParams.set('screenshot', 'false');
+  const promise = fetch(endpoint, { signal: AbortSignal.timeout(7000) })
+    .then(response => {
+      if (!response.ok) throw new Error('Preview request failed');
+      return response.json();
+    })
+    .then(result => {
+      const data = result?.data;
+      if (result?.status !== 'success' || !data) return fallback;
+      return {
+        title: typeof data.title === 'string' && data.title.trim() ? data.title.trim() : fallback.title,
+        description: typeof data.description === 'string' ? data.description.trim() : '',
+        image: safeHttpUrl(data.image?.url || '') || ''
+      };
+    })
+    .catch(() => fallback);
+  linkPreviewCache.set(href, { createdAt: Date.now(), promise });
+  return promise;
+}
+
+function createLinkPreview(href) {
+  const host = new URL(href).hostname;
+  const title = el('strong', { class: 'link-preview-title' }, host);
+  const description = el('span', { class: 'link-preview-description' }, 'Loading preview…');
+  const details = el('span', { class: 'link-preview-details' },
+    el('span', { class: 'link-preview-host' }, host), title, description);
+  const card = el('a', {
+    class: 'link-preview', href, target: '_blank', rel: 'noopener noreferrer',
+    'aria-label': `Link preview for ${host}`
+  }, details);
+  fetchLinkPreview(href).then(preview => {
+    title.textContent = preview.title;
+    description.textContent = preview.description || href;
+    if (preview.image && card.isConnected) {
+      const image = el('img', { class: 'link-preview-image', src: preview.image, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' });
+      image.addEventListener('error', () => image.remove(), { once: true });
+      card.prepend(image);
+    }
+  });
+  return card;
 }
 
 function renderNostrRef(entity) {
@@ -69,10 +152,14 @@ function renderNostrRef(entity) {
     const { type, data } = nip19.decode(entity);
     const pubkey = type === 'npub' ? data : type === 'nprofile' ? data.pubkey : null;
     if (pubkey) {
-      return el('button', {
+      const button = el('button', {
         type: 'button', class: 'mention',
         onclick: event => { event.stopPropagation(); emit('zs:open-profile', pubkey); }
       }, `@${parseProfile(pubkey).name}`);
+      loadMentionProfile(pubkey).then(profile => {
+        button.textContent = `@${profile.name}`;
+      }).catch(() => {});
+      return button;
     }
   } catch {
     return entity;

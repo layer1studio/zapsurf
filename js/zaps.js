@@ -1,5 +1,5 @@
 import { nip57 } from './deps.js';
-import { getLnurlPay } from './lnurl.js';
+import { fetchJson, getLnurlPay } from './lnurl.js';
 import { pool, DEFAULT_RELAYS, ZAP_PRESETS, ensureProfile, statsFor, actionsFor, settings } from './state.js';
 import { signEvent, getSession } from './signer.js';
 import { getWriteRelays } from './publish.js';

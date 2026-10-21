@@ -98,6 +98,33 @@ export async function countRecentZapsSent(pubkeys, onProgress = () => {}) {
   return new Map(unique.map(pk => [pk, zapCountCache.get(pk) || 0]));
 }
 
+export async function loadNoteZaps(note) {
+  const receipts = await pool.querySync(DEFAULT_RELAYS, {
+    kinds: [9735], '#e': [note.id], limit: 5000
+  }, { maxWait: 8000 });
+  const uniqueReceipts = [...new Map(receipts.map(receipt => [receipt.id, receipt])).values()];
+  const zaps = await Promise.all(uniqueReceipts.map(async receipt => {
+    if (!receipt.tags?.some(tag => tag[0] === 'e' && tag[1] === note.id)) return null;
+    const sender = receipt.tags.find(tag => tag[0] === 'P')?.[1];
+    const zap = await validateZapReceipt(receipt, sender, {
+      verifyEvent,
+      getProviderPubkey: providerPubkeyFor,
+      getBolt11AmountMsats: bolt11AmountMsats
+    });
+    if (!zap || zap.recipient !== note.pubkey) return null;
+
+    let request;
+    try {
+      request = JSON.parse(receipt.tags.find(tag => tag[0] === 'description')[1]);
+    } catch {
+      return null;
+    }
+    if (!request.tags?.some(tag => tag[0] === 'e' && tag[1] === note.id)) return null;
+    return { ...zap, createdAt: receipt.created_at, id: receipt.id };
+  }));
+  return zaps.filter(Boolean).sort((a, b) => b.createdAt - a.createdAt);
+}
+
 export function cachedZapCount(pubkey) {
   return zapCountCache.get(pubkey) || 0;
 }

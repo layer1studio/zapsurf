@@ -1,10 +1,10 @@
 import { pool, PROFILE_RELAYS, rememberProfile, profiles, parseProfile, ensureProfile, settings, MAX_MIN_ZAP_SATS, statsFor } from './state.js';
 import { FEEDS, DEFAULT_FEED_ID, loadTrendingItems } from './primal.js';
-import { loadHomeItems, loadThread as fetchThread, ensureProfiles, loadNoteStats, loadProfileNotes, fetchContactList } from './notes.js';
-import { countRecentZapsSent, cachedZapCount, cachedZapSats } from './zapcount.js';
+import { loadHomeItems, loadThread as fetchThread, prefetchThread, ensureProfiles, loadNoteStats, loadProfileNotes, fetchContactList } from './notes.js?v=0.2.0';
+import { countRecentZapsSent, loadNoteZaps as fetchNoteZaps, cachedZapCount, cachedZapSats } from './zapcount.js';
 import { getSession, canSign, isOwn, logout, LOGIN_METHODS } from './signer.js';
 import { avatar, authorLine, badge, repostLine, renderContent, timeEl } from './render.js';
-import { actionBar, requireSigner } from './actions.js';
+import { actionBar, requireSigner } from './actions.js?v=0.2.0';
 import { isFollowing, setFollowing } from './social.js';
 import { toast } from './dialogs.js';
 import { nip19 } from './deps.js';
@@ -62,6 +62,10 @@ const HOME_MAX_AGE_DAYS = 30;
 let selectedNoteId = null;
 let shownNoteId = null;
 let moreObserver = null;
+let replyObserver = null;
+const replyPrefetchQueue = [];
+const queuedReplyIds = new Set();
+let activeReplyPrefetches = 0;
 let loadToken = 0;
 let threadToken = 0;
 let lastResult = null;
@@ -257,7 +261,60 @@ function renderReplies() {
     ...visible.map(reply => replyItem(reply, counts.get(reply.pubkey) || 0)));
 }
 
-async function loadThread(note, container) {
+function renderZap(zap) {
+  return el('div', { class: 'reply zap-item' },
+    avatar(zap.sender, 'small'),
+    el('div', { class: 'reply-body' },
+      el('div', { class: 'reply-meta' },
+        profileLink(zap.sender, authorLine(zap.sender, 0)),
+        el('span', { class: 'zap-amount' }, `⚡ ${formatSats(zap.sats)} sats`),
+        timeEl(zap.createdAt)),
+      zap.comment.trim() ? renderContent(zap.comment, 'note-content zap-comment') : null));
+}
+
+async function loadNoteZaps(note, container) {
+  try {
+    const zaps = await fetchNoteZaps(note);
+    if (!container.isConnected) return;
+    await ensureProfiles([...new Set(zaps.map(zap => zap.sender))]);
+    if (!container.isConnected) return;
+    container.replaceChildren(
+      el('h2', { class: 'replies-heading' }, `Note zaps (${zaps.length})`),
+      ...(zaps.length ? zaps.map(renderZap) : [el('p', { class: 'replies-status' }, 'No verified zaps yet.')])
+    );
+  } catch (err) {
+    if (container.isConnected) container.replaceChildren(el('p', { class: 'replies-status' }, `Could not load zaps: ${err.message}`));
+  }
+}
+
+function createInteractionDropdown() {
+  const panel = el('div', { class: 'interaction-panel' }, el('p', { class: 'replies-status busy' }, 'Loading people…'));
+  const dropdown = el('details', { class: 'interaction-dropdown' },
+    el('summary', { class: 'action interaction-toggle' }, el('span', { 'aria-hidden': 'true' }, '👥'), 'People'),
+    panel);
+  const group = (label, pubkeys) => el('section', { class: 'interaction-group' },
+    el('h3', {}, `${label} (${pubkeys.length})`),
+    pubkeys.length
+      ? el('ul', {}, ...pubkeys.map(pubkey => {
+        const name = parseProfile(pubkey).name;
+        const link = profileLink(pubkey, avatar(pubkey, 'small'));
+        link.setAttribute('aria-label', `View ${name}'s profile`);
+        link.title = name;
+        return el('li', {}, link);
+      }))
+      : el('p', { class: 'interaction-empty' }, 'No one yet.'));
+  return {
+    element: dropdown,
+    render(people) {
+      panel.replaceChildren(
+        group('Reposted by', people.reposts),
+        group('Quoted by', people.quotes),
+        group('Liked by', people.likes));
+    }
+  };
+}
+
+async function loadThread(note, container, interactionDropdown) {
   const token = ++threadToken;
   openThread = { noteId: note.id, container, showAllReplies: false };
   const progress = el('p', { class: 'replies-status busy' }, 'Loading replies, likes and zaps from relays…');
@@ -274,7 +331,7 @@ async function loadThread(note, container) {
           ? `Found ${loadedReplies.length} replies. Loading zap receipts for ${total} people…`
           : `Found ${loadedReplies.length} replies. Checking zap history: ${done}/${total} people…`;
       });
-    });
+    }, people => interactionDropdown.render(people));
     if (token !== threadToken) return;
     const counts = await zapCountsPromise;
     if (token !== threadToken) return;
@@ -296,7 +353,9 @@ function showNote(item, button = null) {
   if (button) currentItem = item;
 
   const { note, zaps, repostedBy } = item;
+  const zapsEl = el('section', { class: 'note-zaps' }, el('p', { class: 'replies-status busy' }, 'Loading zaps…'));
   const repliesEl = el('section', { class: 'replies' });
+  const interactionDropdown = createInteractionDropdown();
   const replyBox = canSign()
     ? inlineReplyBox(note)
     : el('p', { class: 'replies-status' }, getSession() ? 'Read-only: log in with a signer to reply.' : el('button', { type: 'button', class: 'link-button', onclick: openLoginDialog }, 'Log in to reply'));
@@ -310,12 +369,16 @@ function showNote(item, button = null) {
       profileLink(note.pubkey, avatar(note.pubkey, 'large')),
       el('div', { class: 'note-meta' }, profileLink(note.pubkey, authorLine(note.pubkey, zaps)), timeEl(note.created_at)),
       el('div', { class: 'profile-actions' }, followButton(note.pubkey))),
-    renderContent(note.content),
-    el('div', { class: 'note-toolbar' }, actionBar(note, { onReply: focusReply })),
+    renderContent(note.content, 'note-content', { linkPreviews: true }),
+    el('div', { class: 'note-toolbar' },
+      actionBar(note, { onReply: focusReply }),
+      interactionDropdown.element),
+    zapsEl,
     replyBox,
     repliesEl));
   mainEl.parentElement.scrollTop = 0;
-  loadThread(note, repliesEl);
+  loadNoteZaps(note, zapsEl);
+  loadThread(note, repliesEl, interactionDropdown);
 }
 
 // ---------- Feed list ----------
@@ -381,6 +444,36 @@ function renderList(items, emptyMessage) {
     mainEl.replaceChildren(el('p', { class: 'empty' }, emptyMessage));
   }
   renderLoadMore();
+  observeReplyPrefetch(items);
+}
+
+function drainReplyPrefetchQueue() {
+  while (activeReplyPrefetches < 2 && replyPrefetchQueue.length) {
+    const { note, self } = replyPrefetchQueue.shift();
+    activeReplyPrefetches++;
+    prefetchThread(note, self).catch(() => {}).finally(() => {
+      activeReplyPrefetches--;
+      queuedReplyIds.delete(note.id);
+      drainReplyPrefetchQueue();
+    });
+  }
+}
+
+function observeReplyPrefetch(items) {
+  replyObserver?.disconnect();
+  const itemsById = new Map(items.map(item => [item.note.id, item]));
+  replyObserver = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      replyObserver.unobserve(entry.target);
+      const item = itemsById.get(entry.target.dataset.noteId);
+      if (!item || queuedReplyIds.has(item.note.id)) continue;
+      queuedReplyIds.add(item.note.id);
+      replyPrefetchQueue.push({ note: item.note, self: getSession()?.pubkey });
+    }
+    drainReplyPrefetchQueue();
+  }, { root: listEl, rootMargin: '400px' });
+  for (const item of listEl.querySelectorAll('.note-item')) replyObserver.observe(item);
 }
 
 // ---------- Home feed: load older notes on scroll ----------
@@ -591,7 +684,9 @@ function renderAccount() {
     el('div', { class: 'account-actions' },
       settingsButton(),
       el('button', { class: 'button ghost small', type: 'button', onclick: logout }, 'Log out')));
-  document.getElementById('new-note').hidden = !canSign();
+  const newNoteButton = document.getElementById('new-note');
+  newNoteButton.replaceChildren(el('img', { class: 'new-note-icon', src: 'send-message-icon.webp', alt: '', 'aria-hidden': 'true' }), 'New note');
+  newNoteButton.hidden = !canSign();
 }
 
 async function loadOwnProfile() {

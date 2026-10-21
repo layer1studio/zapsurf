@@ -9,6 +9,7 @@ const request = {
   kind: 9734,
   pubkey: sender,
   valid: true,
+  content: 'Thanks for the note!',
   tags: [['p', recipient], ['amount', '21000']]
 };
 
@@ -37,7 +38,9 @@ function validate(receipt = receiptWith(), options = {}) {
 }
 
 test('accepts a signed, paid non-self zap from the expected sender', async () => {
-  assert.deepEqual(await validate(), { sender, recipient, amountMsats: 21000, sats: 21 });
+  assert.deepEqual(await validate(), {
+    sender, recipient, amountMsats: 21000, sats: 21, comment: 'Thanks for the note!'
+  });
 });
 
 test('rejects invalid receipt and request signatures', async () => {

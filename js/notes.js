@@ -182,14 +182,39 @@ async function interactionRelays(note, self) {
   return uniqueRelays(lists.get(note.pubkey).read.slice(0, 4), self ? lists.get(self).read.slice(0, 2) : [], DEFAULT_RELAYS);
 }
 
-export async function loadThread(note, self, onReplies = () => {}) {
+const THREAD_CACHE_LIMIT = 40;
+const THREAD_CACHE_TTL_MS = 2 * 60 * 1000;
+const threadCache = new Map();
+
+function peopleByAuthor(events) {
+  return [...new Map(events.map(event => [event.pubkey, event])).values()]
+    .sort((a, b) => b.created_at - a.created_at)
+    .map(event => event.pubkey);
+}
+
+function interactionPeople(events, noteId) {
+  const references = event => event.tags?.some(tag =>
+    (tag[0] === 'e' || tag[0] === 'q') && tag[1] === noteId);
+  return {
+    reposts: peopleByAuthor(events.filter(event => [6, 16].includes(event.kind) && references(event))),
+    quotes: peopleByAuthor(events.filter(event => event.kind === 1 && event.tags?.some(tag =>
+      (tag[0] === 'q' && tag[1] === noteId) || (tag[0] === 'e' && tag[1] === noteId && tag[3] === 'mention')))),
+    likes: peopleByAuthor(events.filter(event => event.kind === 7 && event.content !== '-' && references(event)))
+  };
+}
+
+async function fetchThread(note, self, onReplies, onInteractions) {
   const relays = await interactionRelays(note, self);
-  const events = await pool.querySync(relays, { kinds: [1, 6, 7, 9735], '#e': [note.id], limit: 1500 }, { maxWait: QUERY_WAIT_MS });
-  const unique = [...new Map(events.map(ev => [ev.id, ev])).values()];
+  const [events, quoteEvents] = await Promise.all([
+    pool.querySync(relays, { kinds: [1, 6, 7, 16, 9735], '#e': [note.id], limit: 1500 }, { maxWait: QUERY_WAIT_MS }),
+    pool.querySync(relays, { kinds: [1], '#q': [note.id], limit: 1000 }, { maxWait: QUERY_WAIT_MS }).catch(() => [])
+  ]);
+  const unique = [...new Map([...events, ...quoteEvents].map(ev => [ev.id, ev])).values()];
   const replies = unique
     .filter(ev => ev.kind === 1 && isDirectReplyTo(ev, note.id))
     .sort((a, b) => a.created_at - b.created_at);
   onReplies(replies);
+  const people = interactionPeople(unique, note.id);
   applyInteractions(unique, [note.id], self);
 
   const replyIds = replies.map(r => r.id);
@@ -197,6 +222,66 @@ export async function loadThread(note, self, onReplies = () => {}) {
     const nested = await pool.querySync(relays, { kinds: [1, 6, 7, 9735], '#e': replyIds.slice(0, 200), limit: 2000 }, { maxWait: QUERY_WAIT_MS }).catch(() => []);
     applyInteractions(nested, replyIds, self);
   }
-  await ensureProfiles(replies.map(r => r.pubkey));
+  await ensureProfiles([...replies.map(r => r.pubkey), ...people.reposts, ...people.quotes, ...people.likes]);
+  onInteractions(people);
   return replies;
+}
+
+function getThreadEntry(note, self) {
+  const key = `${note.id}:${self || ''}`;
+  let entry = threadCache.get(key);
+  if (entry && (!entry.loadedAt || Date.now() - entry.loadedAt < THREAD_CACHE_TTL_MS)) {
+    threadCache.delete(key);
+    threadCache.set(key, entry);
+    return entry;
+  }
+  if (entry) threadCache.delete(key);
+
+  let resolveReplies;
+  let resolveInteractions;
+  entry = {
+    replies: null,
+    repliesLoaded: false,
+    interactions: null,
+    interactionsLoaded: false,
+    loadedAt: 0,
+    repliesReady: new Promise(resolve => { resolveReplies = resolve; }),
+    interactionsReady: new Promise(resolve => { resolveInteractions = resolve; })
+  };
+  entry.resolveInteractions = resolveInteractions;
+  threadCache.set(key, entry);
+  while (threadCache.size > THREAD_CACHE_LIMIT) {
+    threadCache.delete(threadCache.keys().next().value);
+  }
+  entry.promise = fetchThread(note, self, replies => {
+    entry.replies = replies;
+    entry.repliesLoaded = true;
+    resolveReplies(replies);
+  }, people => {
+    entry.interactions = people;
+    entry.interactionsLoaded = true;
+    entry.resolveInteractions(people);
+  }).then(replies => {
+    entry.loadedAt = Date.now();
+    return replies;
+  }).catch(err => {
+    resolveReplies([]);
+    entry.resolveInteractions({ reposts: [], quotes: [], likes: [] });
+    if (threadCache.get(key) === entry) threadCache.delete(key);
+    throw err;
+  });
+  return entry;
+}
+
+export function prefetchThread(note, self) {
+  return getThreadEntry(note, self).promise;
+}
+
+export function loadThread(note, self, onReplies = () => {}, onInteractions = () => {}) {
+  const entry = getThreadEntry(note, self);
+  if (entry.repliesLoaded) onReplies(entry.replies);
+  else entry.repliesReady.then(onReplies).catch(() => {});
+  if (entry.interactionsLoaded) onInteractions(entry.interactions);
+  else entry.interactionsReady.then(onInteractions).catch(() => {});
+  return entry.promise;
 }
