@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0 - 2026-10-22
+
+- Improve post and reply editors with a full-width desktop composer, a scrollable emoji accordion, live rendered previews, and mention lookup for known profiles and NIP-05 addresses.
+- Convert entered npub and selected profile mentions to readable @names while retaining canonical Nostr pubkey references when publishing.
+- Show per-relay publishing progress and accepted/attempted totals, including partial success feedback.
+- Remove the visible character counter while retaining the editor's 8,000-character limit.
+
 ## 0.2.1 - 2026-10-21
 
 - Fix zap invoice requests using an undefined JSON fetch helper.

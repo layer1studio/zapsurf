@@ -2,14 +2,15 @@ import { nip10, nip19 } from './deps.js';
 import { pool, statsFor, actionsFor } from './state.js';
 import { signEvent, getSession } from './signer.js';
 import { getWriteRelays } from './relays.js';
+import { settleRelayPublishes } from './relay-results.mjs';
 import { now, emit } from './util.js';
 
 export { getWriteRelays };
 
-export async function publish(template) {
+export async function publish(template, { onProgress = () => {} } = {}) {
   const event = await signEvent({ created_at: now(), ...template });
   const relays = await getWriteRelays(event.pubkey);
-  const results = await Promise.allSettled(pool.publish(relays, event));
+  const { results } = await settleRelayPublishes(pool.publish(relays, event), onProgress);
   if (!results.some(r => r.status === 'fulfilled')) {
     throw new Error('No relay accepted the event. Check your connection and try again.');
   }
@@ -63,16 +64,17 @@ function replyTags(parent) {
   return tags;
 }
 
-export async function postNote(rawContent, { replyTo = null, quote = null } = {}) {
+export async function postNote(rawContent, { replyTo = null, quote = null, onProgress } = {}) {
   let content = normaliseContent(rawContent);
   if (quote) content = `${content}\n\nnostr:${nip19.neventEncode({ id: quote.id, author: quote.pubkey })}`;
   if (!content) throw new Error('Write something first.');
 
   const tags = replyTo ? replyTags(replyTo) : [];
+  tags.push(['client', 'ZapSurf']);
   for (const tag of contentTags(content)) {
     if (!tags.some(t => t[0] === tag[0] && t[1] === tag[1])) tags.push(tag);
   }
-  const event = await publish({ kind: 1, content, tags });
+  const event = await publish({ kind: 1, content, tags }, { onProgress });
   if (replyTo) {
     statsFor(replyTo.id).replies++;
     actionsFor(replyTo.id).replied = true;

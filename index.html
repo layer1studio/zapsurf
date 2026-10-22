@@ -114,16 +114,15 @@
     </form>
   </dialog>
 
-  <dialog id="compose-dialog" class="modal">
+  <dialog id="compose-dialog" class="modal compose-modal">
     <div class="dialog-header">
       <h2 id="compose-title">New note</h2>
       <button type="button" class="icon-button" id="compose-close" aria-label="Close" data-keep-enabled="true">✕</button>
     </div>
     <div id="compose-context"></div>
     <form id="compose-form">
-      <textarea id="compose-text" rows="6" placeholder="What's happening? Use #hashtags and paste npubs to mention people." aria-label="Note text"></textarea>
+      <textarea id="compose-text" rows="8" placeholder="What's happening? Use #hashtags or @ to mention someone." aria-label="Note text"></textarea>
       <div class="compose-footer">
-        <span id="compose-count" class="char-count"></span>
         <span id="compose-status" class="form-status" role="status"></span>
         <button type="submit" class="button">Post</button>
       </div>
