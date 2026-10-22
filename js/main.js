@@ -353,6 +353,7 @@ function showNote(item, button = null) {
   if (button) currentItem = item;
 
   const { note, zaps, repostedBy } = item;
+  const clientName = note.tags?.find(tag => tag[0] === 'client')?.[1];
   const zapsEl = el('section', { class: 'note-zaps' }, el('p', { class: 'replies-status busy' }, 'Loading zaps…'));
   const repliesEl = el('section', { class: 'replies' });
   const interactionDropdown = createInteractionDropdown();
@@ -375,7 +376,8 @@ function showNote(item, button = null) {
       interactionDropdown.element),
     zapsEl,
     replyBox,
-    repliesEl));
+    repliesEl,
+    clientName ? el('p', { class: 'note-attribution' }, `Note published with ${clientName}`) : null));
   mainEl.parentElement.scrollTop = 0;
   loadNoteZaps(note, zapsEl);
   loadThread(note, repliesEl, interactionDropdown);
