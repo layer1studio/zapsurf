@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1 - 2026-10-22
+
+- Add canonical metadata and SEO/social descriptions focused on ZapSurf's zap-history feed filtering.
+- Add the root-level OG image to Open Graph and Twitter large-image previews.
+
 ## 0.3.0 - 2026-10-22
 
 - Improve post and reply editors with a full-width desktop composer, a scrollable emoji accordion, live rendered previews, and mention lookup for known profiles and NIP-05 addresses.
