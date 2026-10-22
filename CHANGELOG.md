@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.2 - 2026-10-22
+
+- Refine the page title and Open Graph/Twitter titles to "ZapSurf | Nostr Notes From Solid Zappers".
+
 ## 0.3.1 - 2026-10-22
 
 - Add canonical metadata and SEO/social descriptions focused on ZapSurf's zap-history feed filtering.
