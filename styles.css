@@ -315,6 +315,14 @@ a:focus-visible {
   list-style: none;
 }
 
+.new-feed-notes {
+  width: calc(100% - 24px);
+  margin: 8px 12px;
+  text-align: center;
+}
+
+.new-feed-notes[hidden] { display: none; }
+
 .note-item {
   display: flex;
   gap: 10px;
@@ -686,6 +694,24 @@ a:focus-visible {
   gap: 10px;
   padding: 14px 0;
   border-bottom: 1px solid var(--border);
+}
+
+.reply-thread { min-width: 0; }
+
+.reply-children {
+  margin-left: 12px;
+}
+
+.reply-children-flat {
+  margin-left: 0;
+}
+
+.reply-marker {
+  flex: 0 0 14px;
+  margin-top: 16px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
 }
 
 .reply-body { min-width: 0; flex: 1; }

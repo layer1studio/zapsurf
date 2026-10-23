@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0 - 2026-10-23
+
+- Add shareable root-level profile and note URLs using NIP-19 identifiers, with browser-history navigation and Vercel deep-link rewrites.
+- Display recursive reply threads with chronological siblings, capped indentation, and bounded relay queries.
+- Poll every minute while the tab is foregrounded for new notes by current-feed authors, visible sidebar interactions, and the open thread, including verified note zaps.
+- Pause menu polling when the sidebar is hidden, and stage newly discovered notes behind an insert button to preserve reading position.
+
 ## 0.3.2 - 2026-10-22
 
 - Refine the page title and Open Graph/Twitter titles to "ZapSurf | Nostr Notes From Solid Zappers".

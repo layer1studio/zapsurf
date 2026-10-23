@@ -1,17 +1,20 @@
 import { pool, PROFILE_RELAYS, rememberProfile, profiles, parseProfile, ensureProfile, settings, MAX_MIN_ZAP_SATS, statsFor } from './state.js';
 import { FEEDS, DEFAULT_FEED_ID, loadTrendingItems } from './primal.js';
-import { loadHomeItems, loadThread as fetchThread, prefetchThread, ensureProfiles, loadNoteStats, loadProfileNotes, fetchContactList } from './notes.js?v=0.2.0';
+import { loadHomeItems, loadThread as fetchThread, prefetchThread, ensureProfiles, loadNoteStats, refreshNoteStats, pollRecentNotes, refreshThread, loadProfileNotes, loadNoteEvent, fetchContactList } from './notes.js?v=0.4.0';
 import { countRecentZapsSent, loadNoteZaps as fetchNoteZaps, cachedZapCount, cachedZapSats } from './zapcount.js';
 import { getSession, canSign, isOwn, logout, LOGIN_METHODS } from './signer.js';
 import { avatar, authorLine, badge, repostLine, renderContent, timeEl } from './render.js';
 import { actionBar, requireSigner } from './actions.js?v=0.2.0';
 import { isFollowing, setFollowing } from './social.js';
 import { toast } from './dialogs.js';
-import { nip19 } from './deps.js';
+import { nip10, nip19 } from './deps.js';
 import { inlineReplyBox, openComposer } from './compose.js';
 import { openLoginDialog } from './login.js';
 import { openSettings } from './settings.js';
-import { el, isDirectReplyTo, now, store, formatSats, safeHttpUrl } from './util.js';
+import { el, isDirectReplyTo, isReply, now, store, formatSats, safeHttpUrl } from './util.js';
+import { buildReplyTree } from './reply-tree.mjs';
+import { notePath, parseViewPath, profilePath } from './view-routes.mjs';
+import { selectNewNotes } from './live-updates.mjs';
 
 const SORT_KEY = 'zs-sort';
 const stat = key => item => statsFor(item.note.id)[key];
@@ -54,10 +57,13 @@ const statusEl = document.getElementById('status');
 const listEl = document.getElementById('note-list');
 const mainEl = document.getElementById('main');
 const accountEl = document.getElementById('account');
+const newFeedNotesButton = document.getElementById('new-feed-notes');
 
 const HOME_FEED = { id: 'home', label: 'Home (following)', group: 'You', personal: true };
 const MAX_EMPTY_PAGES = 3;
 const HOME_MAX_AGE_DAYS = 30;
+const LIVE_REFRESH_MS = 60_000;
+const MAX_PENDING_FEED_NOTES = 100;
 
 let selectedNoteId = null;
 let shownNoteId = null;
@@ -73,6 +79,20 @@ let openThread = null;
 let currentItem = null;
 let profileOpen = null;
 let profileToken = 0;
+let routeToken = 0;
+let routeNotice = '';
+let liveRefreshBusy = false;
+let lastLivePollAt = now();
+
+function updatePath(path, replace = false) {
+  if (location.pathname === path && !location.search && !location.hash) return;
+  history[replace ? 'replaceState' : 'pushState']({ zapsurf: true }, '', path);
+}
+
+function replyParentId(event) {
+  const { root, reply } = nip10.parse(event);
+  return reply?.id || root?.id || null;
+}
 
 const passesFilter = pubkey => isOwn(pubkey) || cachedZapSats(pubkey) >= settings.minZapSats;
 
@@ -156,7 +176,10 @@ function profileNoteCard(note, zaps) {
       }, 'Open note')));
 }
 
-async function showProfile(pubkey) {
+async function showProfile(pubkey, { updateHistory = true } = {}) {
+  routeToken++;
+  routeNotice = '';
+  if (updateHistory) updatePath(profilePath(pubkey, nip19));
   const token = ++profileToken;
   threadToken++;
   openThread = null;
@@ -231,8 +254,9 @@ document.addEventListener('zs:open-profile', ({ detail: pubkey }) => showProfile
 
 // ---------- Note view ----------
 
-function replyItem(reply, zaps) {
-  return el('article', { class: 'reply' },
+function replyItem(reply, zaps, nested = false) {
+  return el('article', { class: `reply${nested ? ' nested-reply' : ''}` },
+    nested ? el('span', { class: 'reply-marker', 'aria-hidden': 'true' }, '↪') : null,
     profileLink(reply.pubkey, avatar(reply.pubkey, 'small')),
     el('div', { class: 'reply-body' },
       el('div', { class: 'reply-meta' }, profileLink(reply.pubkey, authorLine(reply.pubkey, zaps)), timeEl(reply.created_at)),
@@ -240,11 +264,33 @@ function replyItem(reply, zaps) {
       actionBar(reply)));
 }
 
+function renderReplyNode(node, counts, depth = 0) {
+  return el('div', { class: 'reply-thread' },
+    replyItem(node.event, counts.get(node.event.pubkey) || 0, depth > 0),
+    node.children.length ? el('div', {
+      class: `reply-children${depth >= 4 ? ' reply-children-flat' : ''}`
+    }, ...node.children.map(child => renderReplyNode(child, counts, depth + 1))) : null);
+}
+
+function countReplyTree(node) {
+  return 1 + node.children.reduce((total, child) => total + countReplyTree(child), 0);
+}
+
 function renderReplies() {
   if (!openThread?.replies) return;
   const { replies, counts, container, showAllReplies } = openThread;
-  const visible = showAllReplies ? replies : replies.filter(r => passesFilter(r.pubkey));
-  const hidden = replies.length - visible.length;
+  const tree = buildReplyTree(openThread.noteId, replies, replyParentId);
+  let visibleCount = 0;
+  let hidden = 0;
+  const filterTree = nodes => nodes.flatMap(node => {
+    if (!showAllReplies && !passesFilter(node.event.pubkey)) {
+      hidden += countReplyTree(node);
+      return [];
+    }
+    visibleCount++;
+    return [{ ...node, children: filterTree(node.children) }];
+  });
+  const visible = filterTree(tree);
   const hiddenStatus = hidden ? el('p', { class: 'replies-status' },
     `${hidden} ${hidden === 1 ? 'reply' : 'replies'} hidden from people who haven't ${thresholdText()}. `,
     el('button', {
@@ -256,9 +302,9 @@ function renderReplies() {
       }
     }, 'Show anyway')) : null;
   container.replaceChildren(
-    el('h2', { class: 'replies-heading' }, `Replies (${visible.length})`),
+    el('h2', { class: 'replies-heading' }, `Replies (${visibleCount})`),
     ...(hiddenStatus ? [hiddenStatus] : []),
-    ...visible.map(reply => replyItem(reply, counts.get(reply.pubkey) || 0)));
+    ...visible.map(node => renderReplyNode(node, counts)));
 }
 
 function renderZap(zap) {
@@ -272,7 +318,8 @@ function renderZap(zap) {
       zap.comment.trim() ? renderContent(zap.comment, 'note-content zap-comment') : null));
 }
 
-async function loadNoteZaps(note, container) {
+async function loadNoteZaps(note, container, quiet = false) {
+  if (!quiet) container.replaceChildren(el('p', { class: 'replies-status busy' }, 'Loading verified zaps…'));
   try {
     const zaps = await fetchNoteZaps(note);
     if (!container.isConnected) return;
@@ -283,7 +330,7 @@ async function loadNoteZaps(note, container) {
       ...(zaps.length ? zaps.map(renderZap) : [el('p', { class: 'replies-status' }, 'No verified zaps yet.')])
     );
   } catch (err) {
-    if (container.isConnected) container.replaceChildren(el('p', { class: 'replies-status' }, `Could not load zaps: ${err.message}`));
+    if (container.isConnected && !quiet) container.replaceChildren(el('p', { class: 'replies-status' }, `Could not load zaps: ${err.message}`));
   }
 }
 
@@ -304,7 +351,6 @@ function createInteractionDropdown() {
       }))
       : el('p', { class: 'interaction-empty' }, 'No one yet.'));
   return {
-    element: dropdown,
     render(people) {
       panel.replaceChildren(
         group('Reposted by', people.reposts),
@@ -316,7 +362,10 @@ function createInteractionDropdown() {
 
 async function loadThread(note, container, interactionDropdown) {
   const token = ++threadToken;
-  openThread = { noteId: note.id, container, showAllReplies: false };
+  openThread = {
+    noteId: note.id, container, showAllReplies: false, replies: [], loading: true,
+    renderInteractions: people => interactionDropdown.render(people)
+  };
   const progress = el('p', { class: 'replies-status busy' }, 'Loading replies, likes and zaps from relays…');
   container.replaceChildren(progress, skeletonReply(), skeletonReply());
   try {
@@ -335,15 +384,19 @@ async function loadThread(note, container, interactionDropdown) {
     if (token !== threadToken) return;
     const counts = await zapCountsPromise;
     if (token !== threadToken) return;
-    Object.assign(openThread, { replies, counts });
+    Object.assign(openThread, { replies, counts, loading: false });
     renderReplies();
   } catch (err) {
     if (token !== threadToken) return;
+    openThread.loading = false;
     container.replaceChildren(el('p', { class: 'replies-status' }, `Could not load replies: ${err.message}`));
   }
 }
 
-function showNote(item, button = null) {
+function showNote(item, button = null, { updateHistory = true } = {}) {
+  routeToken++;
+  routeNotice = '';
+  if (updateHistory) updatePath(notePath(item.note.id, nip19));
   for (const other of listEl.querySelectorAll('.note-item')) other.removeAttribute('aria-current');
   button?.setAttribute('aria-current', 'true');
   if (button) selectedNoteId = item.note.id;
@@ -381,6 +434,7 @@ function showNote(item, button = null) {
   mainEl.parentElement.scrollTop = 0;
   loadNoteZaps(note, zapsEl);
   loadThread(note, repliesEl, interactionDropdown);
+  if (openThread?.noteId === note.id) openThread.zapsContainer = zapsEl;
 }
 
 // ---------- Feed list ----------
@@ -424,6 +478,50 @@ function itemStats(noteId) {
   return parts.length ? el('div', { class: 'item-stats' }, parts.join('  ·  ')) : null;
 }
 
+function updateNewFeedNotesButton(result = lastResult) {
+  const count = result?.pendingNewNotes?.length || 0;
+  newFeedNotesButton.hidden = count === 0;
+  newFeedNotesButton.textContent = `Insert ${count} new ${count === 1 ? 'note' : 'notes'}`;
+}
+
+async function insertNewFeedNotes() {
+  const result = lastResult;
+  if (!result?.pendingNewNotes?.length || result.insertingNewNotes) return;
+  result.insertingNewNotes = true;
+  newFeedNotesButton.disabled = true;
+  const pending = result.pendingNewNotes.splice(0);
+  updateNewFeedNotesButton(result);
+  try {
+    const pubkeys = [...new Set(pending.map(item => item.note.pubkey))];
+    const [, counts] = await Promise.all([
+      ensureProfiles(pubkeys),
+      countRecentZapsSent(pubkeys)
+    ]);
+    await loadNoteStats(pending.map(item => item.note), getSession()?.pubkey);
+    if (result !== lastResult) return;
+    for (const item of pending) {
+      item.zaps = counts.get(item.note.pubkey) || 0;
+      item.hasStats = true;
+    }
+    result.items.unshift(...pending);
+    const scrollTop = listEl.scrollTop;
+    applyFilter();
+    listEl.scrollTop = scrollTop;
+  } catch {
+    if (result === lastResult) {
+      result.pendingNewNotes = [...pending, ...result.pendingNewNotes]
+        .sort((a, b) => b.note.created_at - a.note.created_at)
+        .slice(0, MAX_PENDING_FEED_NOTES);
+    }
+  } finally {
+    result.insertingNewNotes = false;
+    newFeedNotesButton.disabled = false;
+    updateNewFeedNotesButton();
+  }
+}
+
+newFeedNotesButton.addEventListener('click', insertNewFeedNotes);
+
 function renderList(items, emptyMessage) {
   listEl.replaceChildren(...items.map(item => {
     const button = el('button', { class: 'note-item', type: 'button', 'data-note-id': item.note.id },
@@ -440,7 +538,9 @@ function renderList(items, emptyMessage) {
   if (profileOpen || (selected && selectedNoteId === shownNoteId)) {
     if (!profileOpen) selected.setAttribute('aria-current', 'true');
   } else if (selected || listEl.querySelector('.note-item')) {
-    (selected || listEl.querySelector('.note-item')).click();
+    const button = selected || listEl.querySelector('.note-item');
+    const item = items.find(candidate => candidate.note.id === button.dataset.noteId);
+    if (item) showNote(item, button, { updateHistory: false });
   } else {
     shownNoteId = null;
     mainEl.replaceChildren(el('p', { class: 'empty' }, emptyMessage));
@@ -548,6 +648,101 @@ async function refreshStats() {
   listEl.scrollTop = scrollTop;
 }
 
+function visibleMenuItems(result) {
+  if (!result || result.loading || document.body.classList.contains('sidebar-hidden')) return [];
+  const bounds = listEl.getBoundingClientRect();
+  if (!bounds.width || !bounds.height) return [];
+  const items = new Map(result.items.map(item => [item.note.id, item]));
+  return [...listEl.querySelectorAll('.note-item')]
+    .filter(button => {
+      const rect = button.getBoundingClientRect();
+      return rect.bottom > bounds.top && rect.top < bounds.bottom
+        && rect.right > 0 && rect.left < window.innerWidth;
+    })
+    .map(button => items.get(button.dataset.noteId))
+    .filter(Boolean);
+}
+
+function renderRefreshedMenuStats(items) {
+  const buttons = new Map([...listEl.querySelectorAll('.note-item')]
+    .map(button => [button.dataset.noteId, button]));
+  for (const item of items) {
+    const body = buttons.get(item.note.id)?.querySelector('.note-item-body');
+    if (!body) continue;
+    const current = body.querySelector('.item-stats');
+    const updated = itemStats(item.note.id);
+    if (current && updated) current.replaceWith(updated);
+    else if (!current && updated) body.append(updated);
+  }
+}
+
+async function refreshOpenThread() {
+  const thread = openThread;
+  const note = currentItem?.note;
+  if (!thread || thread.loading || thread.refreshing || !note || thread.noteId !== note.id || !thread.container.isConnected) return;
+  thread.refreshing = true;
+  try {
+    let replies = [];
+    let people = null;
+    await refreshThread(note, getSession()?.pubkey, value => { replies = value; }, value => { people = value; });
+    if (thread !== openThread || !thread.container.isConnected) return;
+    const oldAuthors = new Set(thread.replies.map(reply => reply.pubkey));
+    const addedAuthors = [...new Set(replies.filter(reply => !oldAuthors.has(reply.pubkey)).map(reply => reply.pubkey))];
+    const counts = new Map(thread.counts || []);
+    if (addedAuthors.length) {
+      const freshCounts = await countRecentZapsSent(addedAuthors);
+      for (const [pubkey, count] of freshCounts) counts.set(pubkey, count);
+    }
+    if (thread !== openThread || !thread.container.isConnected) return;
+    thread.replies = replies;
+    thread.counts = counts;
+    if (people) thread.renderInteractions(people);
+    renderReplies();
+    if (thread.zapsContainer?.isConnected) await loadNoteZaps(note, thread.zapsContainer, true);
+  } finally {
+    thread.refreshing = false;
+  }
+}
+
+async function pollLiveUpdates() {
+  if (document.visibilityState !== 'visible' || liveRefreshBusy) return;
+  const result = lastResult;
+  if ((!result || result.loading) && !openThread) return;
+  liveRefreshBusy = true;
+  const pollStartedAt = now();
+  const visible = visibleMenuItems(result);
+  const authors = result && !result.loading && !document.body.classList.contains('sidebar-hidden')
+    ? [...new Set(result.items.map(item => item.note.pubkey))]
+    : [];
+  try {
+    let events = [];
+    let feedPollSucceeded = !authors.length;
+    if (authors.length) {
+      try {
+        events = await pollRecentNotes(authors, lastLivePollAt);
+        feedPollSucceeded = true;
+      } catch { /* Keep the old cursor so the next poll retries the gap. */ }
+    }
+    if (visible.length) await refreshNoteStats(visible.map(item => item.note), getSession()?.pubkey);
+    if (result === lastResult && result && !result.loading) {
+      const knownIds = new Set([...result.items, ...result.pendingNewNotes].map(item => item.note.id));
+      const room = MAX_PENDING_FEED_NOTES - result.pendingNewNotes.length;
+      const additions = selectNewNotes(events, knownIds, isReply)
+        .slice(0, Math.max(0, room))
+        .map(note => ({ note }));
+      result.pendingNewNotes.unshift(...additions);
+      updateNewFeedNotesButton(result);
+      if (visible.length) renderRefreshedMenuStats(visible);
+      if (authors.length && feedPollSucceeded) lastLivePollAt = pollStartedAt;
+    }
+    await refreshOpenThread();
+  } catch {
+    // The next foreground poll retries transient relay failures.
+  } finally {
+    liveRefreshBusy = false;
+  }
+}
+
 function applyFilter() {
   if (!lastResult) return;
   const { items, isHome, fallback, verifiedAuthors, zapCheckComplete, zapStage, authorCount } = lastResult;
@@ -567,14 +762,21 @@ function applyFilter() {
     : `${readyItems.length} notes from people you follow. ${badged} have the zapper badge.`)
     + progressText
     + (counting ? ' Counting zaps and replies…' : '')
-    + (fallback ? ' Primal is unavailable, so notes are ranked from relays.' : ''), counting);
+    + (fallback ? ' Primal is unavailable, so notes are ranked from relays.' : '')
+    + (routeNotice ? ` ${routeNotice}` : ''), counting);
   if (!shown.length && !zapCheckComplete && !selectedNoteId) return;
   renderList(shown, isHome
     ? zapCheckComplete ? 'No recent notes from people you follow match this filter.' : 'Checking zap history for more notes…'
     : zapCheckComplete ? 'No trending notes from verified zappers in this feed.' : 'Checking zap history for more notes…');
 }
 
-async function loadFeed(feedId) {
+async function loadFeed(feedId, { updateHistory = true, notice = '' } = {}) {
+  routeToken++;
+  routeNotice = notice;
+  lastLivePollAt = now();
+  newFeedNotesButton.hidden = true;
+  newFeedNotesButton.disabled = false;
+  if (updateHistory) updatePath('/');
   const token = ++loadToken;
   const session = getSession();
   const isHome = Boolean(feedId === HOME_FEED.id && session);
@@ -621,6 +823,7 @@ async function loadFeed(feedId) {
       zapCheckComplete: false,
       zapStage: 'fetching',
       authorCount: authors.length,
+      pendingNewNotes: [],
       loading: true
     };
     lastResult = result;
@@ -729,6 +932,54 @@ function bindThreshold(input, max, current, save) {
 
 bindThreshold(minZapSatsInput, MAX_MIN_ZAP_SATS, () => settings.minZapSats, value => settings.setMinZapSats(value));
 
+function showRouteError(message) {
+  setStatus(message);
+  listEl.replaceChildren();
+  mainEl.replaceChildren(
+    el('p', { class: 'empty' }, message),
+    el('button', { type: 'button', class: 'button', onclick: () => loadFeed(feedSelect.value) }, 'Go to feed'));
+}
+
+async function restoreLocation() {
+  const token = ++routeToken;
+  const route = parseViewPath(location.pathname, nip19);
+  routeNotice = '';
+  if (route.type === 'home') {
+    loadFeed(feedSelect.value, { updateHistory: false });
+    return;
+  }
+  if (route.type === 'invalid') {
+    updatePath('/', true);
+    loadFeed(feedSelect.value, {
+      updateHistory: false,
+      notice: 'That link was not recognized; showing your feed.'
+    });
+    return;
+  }
+  if (route.type === 'profile') {
+    showProfile(route.pubkey, { updateHistory: false });
+    return;
+  }
+
+  listEl.replaceChildren();
+  setStatus('Loading note…', true);
+  mainEl.replaceChildren(skeletonNote('Loading note from relays…'));
+  try {
+    const note = await loadNoteEvent(route.id, route.relays);
+    if (token !== routeToken) return;
+    if (!note) throw new Error('No matching note was found on the available relays.');
+    await ensureProfiles([note.pubkey]);
+    if (token !== routeToken) return;
+    currentItem = { note, zaps: cachedZapCount(note.pubkey) };
+    showNote(currentItem, null, { updateHistory: false });
+  } catch (err) {
+    if (token !== routeToken) return;
+    showRouteError(`Could not open this note: ${err.message}`);
+  }
+}
+
+window.addEventListener('popstate', restoreLocation);
+
 // ---------- Events ----------
 
 document.addEventListener('zs:session', () => {
@@ -738,7 +989,10 @@ document.addEventListener('zs:session', () => {
   const wasPersonal = [HOME_FEED, ...FEEDS].some(f => f.id === feedSelect.value && f.personal);
   const next = session ? HOME_FEED.id : wasPersonal ? DEFAULT_FEED_ID : feedSelect.value;
   renderFeedOptions(next);
-  loadFeed(feedSelect.value);
+  const route = parseViewPath(location.pathname, nip19);
+  if (route.type === 'profile') showProfile(route.pubkey, { updateHistory: false });
+  else if (route.type === 'note') restoreLocation();
+  else loadFeed(feedSelect.value);
   loadOwnProfile();
 });
 
@@ -746,9 +1000,11 @@ document.addEventListener('zs:need-login', openLoginDialog);
 
 document.addEventListener('zs:published', ({ detail: event }) => {
   if (event.kind !== 1) return;
-  const isThreadReply = openThread && isDirectReplyTo(event, openThread.noteId);
-  if (isThreadReply && openThread.replies) {
-    openThread.replies.push(event);
+  const parentId = replyParentId(event);
+  const isThreadReply = openThread?.replies && (parentId === openThread.noteId
+    || openThread.replies.some(reply => reply.id === parentId));
+  if (isThreadReply && openThread.counts) {
+    if (!openThread.replies.some(reply => reply.id === event.id)) openThread.replies.push(event);
     openThread.counts.set(event.pubkey, cachedZapCount(event.pubkey));
     renderReplies();
   } else if (!event.tags.some(t => t[0] === 'e') && lastResult?.isHome) {
@@ -827,7 +1083,11 @@ updateThresholdLabels();
 renderAccount();
 document.getElementById('new-note').hidden = !canSign();
 renderFeedOptions(getSession() ? HOME_FEED.id : DEFAULT_FEED_ID);
-loadFeed(feedSelect.value);
+restoreLocation();
+setInterval(pollLiveUpdates, LIVE_REFRESH_MS);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') pollLiveUpdates();
+});
 setControlsCollapsed(store.get(CONTROLS_KEY) === true);
 document.body.classList.add('no-anim');
 setSidebarHidden(store.get(SIDEBAR_KEY) === true);

@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <base href="/">
   <title>ZapSurf | Nostr Notes From Solid Zappers</title>
   <meta name="description" content="ZapSurf is a Nostr client that filters notes by authors' recent, verified zap history to increase feed signal. ⚡">
   <link rel="canonical" href="https://zapsurf.vercel.app/">
@@ -23,7 +24,7 @@
   <meta name="twitter:image:alt" content="ZapSurf Nostr client showing a note feed and discussion thread.">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <meta name="theme-color" content="#0e0f13">
-  <link rel="stylesheet" href="styles.css?v=0.2.1">
+  <link rel="stylesheet" href="styles.css?v=0.4.0">
 </head>
 <body>
   <aside class="sidebar" id="sidebar">
@@ -48,6 +49,7 @@
       </div>
       <p id="status" class="status" role="status"></p>
     </header>
+    <button type="button" id="new-feed-notes" class="button secondary small new-feed-notes" hidden></button>
     <ul id="note-list" class="note-list"></ul>
   </aside>
 
@@ -208,6 +210,6 @@
     </section>
   </dialog>
 
-  <script type="module" src="js/main.js?v=0.2.1"></script>
+  <script type="module" src="js/main.js?v=0.4.0"></script>
 </body>
 </html>

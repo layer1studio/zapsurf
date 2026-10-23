@@ -7,6 +7,8 @@ const HOME_WINDOW_HOURS = 48;
 const HOME_LIMIT = 150;
 const RELAY_LIMIT = 300;
 const QUERY_WAIT_MS = 7000;
+const MAX_THREAD_DEPTH = 8;
+const MAX_THREAD_REPLIES = 500;
 
 function newest(events) {
   return events.reduce((best, ev) => (!best || ev.created_at > best.created_at ? ev : best), null);
@@ -50,6 +52,12 @@ export async function loadProfileNotes(pubkey, limit = 30) {
     .filter(ev => !isReply(ev))
     .sort((a, b) => b.created_at - a.created_at)
     .slice(0, limit);
+}
+
+export async function loadNoteEvent(id, relayHints = []) {
+  const relays = uniqueRelays(relayHints, DEFAULT_RELAYS);
+  const events = await pool.querySync(relays, { kinds: [1], ids: [id], limit: 1 }, { maxWait: QUERY_WAIT_MS });
+  return events.find(event => event.id === id && event.kind === 1) || null;
 }
 
 function parseRepost(repost, notesById) {
@@ -176,6 +184,26 @@ export async function loadNoteStats(notes, self) {
   }));
 }
 
+export async function refreshNoteStats(notes, self) {
+  const ids = [...new Set(notes.map(note => note.id))];
+  await Promise.all(chunk(ids, 100).map(async batch => {
+    const events = await pool.querySync(DEFAULT_RELAYS, {
+      kinds: [1, 6, 7, 9735], '#e': batch, limit: 5000
+    }, { maxWait: QUERY_WAIT_MS }).catch(() => []);
+    applyInteractions([...new Map(events.map(event => [event.id, event])).values()], batch, self);
+  }));
+}
+
+export async function pollRecentNotes(authors, since) {
+  const uniqueAuthors = [...new Set(authors)];
+  if (!uniqueAuthors.length) return [];
+  const results = await Promise.all(chunk(uniqueAuthors, 200).map(batch =>
+    pool.querySync(DEFAULT_RELAYS, {
+      kinds: [1], authors: batch, since, limit: 1000
+    }, { maxWait: QUERY_WAIT_MS })));
+  return [...new Map(results.flat().map(event => [event.id, event])).values()];
+}
+
 async function interactionRelays(note, self) {
   const lists = await fetchRelayLists([note.pubkey, ...(self ? [self] : [])]);
   // Replies and reactions are sent to the author's read (inbox) relays.
@@ -212,19 +240,42 @@ async function fetchThread(note, self, onReplies, onInteractions) {
   const unique = [...new Map([...events, ...quoteEvents].map(ev => [ev.id, ev])).values()];
   const replies = unique
     .filter(ev => ev.kind === 1 && isDirectReplyTo(ev, note.id))
-    .sort((a, b) => a.created_at - b.created_at);
-  onReplies(replies);
+    .sort((a, b) => a.created_at - b.created_at)
+    .slice(0, MAX_THREAD_REPLIES);
   const people = interactionPeople(unique, note.id);
   applyInteractions(unique, [note.id], self);
 
-  const replyIds = replies.map(r => r.id);
-  if (replyIds.length) {
-    const nested = await pool.querySync(relays, { kinds: [1, 6, 7, 9735], '#e': replyIds.slice(0, 200), limit: 2000 }, { maxWait: QUERY_WAIT_MS }).catch(() => []);
-    applyInteractions(nested, replyIds, self);
+  const allReplies = [...replies];
+  const knownIds = new Set(replies.map(reply => reply.id));
+  let frontier = replies;
+  for (let depth = 1; depth < MAX_THREAD_DEPTH && frontier.length && allReplies.length < MAX_THREAD_REPLIES; depth++) {
+    const next = [];
+    for (let start = 0; start < frontier.length && allReplies.length + next.length < MAX_THREAD_REPLIES; start += 200) {
+      const parents = frontier.slice(start, start + 200);
+      const parentIds = parents.map(reply => reply.id);
+      const events = await pool.querySync(relays, {
+        kinds: [1, 6, 7, 9735], '#e': parentIds, limit: 2000
+      }, { maxWait: QUERY_WAIT_MS }).catch(() => []);
+      applyInteractions(events, parentIds, self);
+      const candidateReplies = events.filter(event => event.kind === 1 && !knownIds.has(event.id));
+      for (const parent of parents) {
+        for (const event of candidateReplies) {
+          if (allReplies.length + next.length >= MAX_THREAD_REPLIES) break;
+          if (!knownIds.has(event.id) && isDirectReplyTo(event, parent.id)) {
+            knownIds.add(event.id);
+            next.push(event);
+          }
+        }
+      }
+    }
+    allReplies.push(...next);
+    frontier = next;
   }
-  await ensureProfiles([...replies.map(r => r.pubkey), ...people.reposts, ...people.quotes, ...people.likes]);
+  allReplies.sort((a, b) => a.created_at - b.created_at);
+  onReplies(allReplies);
+  await ensureProfiles([...allReplies.map(reply => reply.pubkey), ...people.reposts, ...people.quotes, ...people.likes]);
   onInteractions(people);
-  return replies;
+  return allReplies;
 }
 
 function getThreadEntry(note, self) {
@@ -284,4 +335,8 @@ export function loadThread(note, self, onReplies = () => {}, onInteractions = ()
   if (entry.interactionsLoaded) onInteractions(entry.interactions);
   else entry.interactionsReady.then(onInteractions).catch(() => {});
   return entry.promise;
+}
+
+export function refreshThread(note, self, onReplies = () => {}, onInteractions = () => {}) {
+  return fetchThread(note, self, onReplies, onInteractions);
 }
