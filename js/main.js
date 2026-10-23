@@ -64,6 +64,9 @@ const sidebarProfileIconEl = document.getElementById('sidebar-profile-icon');
 const newFeedNotesButton = document.getElementById('new-feed-notes');
 const notificationsDialog = document.getElementById('notifications-dialog');
 const notificationsListEl = document.getElementById('notifications-list');
+const noteNavigation = document.getElementById('note-navigation');
+const previousNoteButton = document.getElementById('previous-note');
+const nextNoteButton = document.getElementById('next-note');
 
 const HOME_FEED = { id: 'home', label: 'Home (following)', group: 'You', personal: true };
 const MAX_EMPTY_PAGES = 3;
@@ -203,6 +206,7 @@ async function showProfile(pubkey, { updateHistory = true } = {}) {
   openThread = null;
   profileOpen = pubkey;
   shownNoteId = null;
+  updateNoteNavigation();
   for (const other of listEl.querySelectorAll('.note-item')) other.removeAttribute('aria-current');
 
   const back = currentItem ? el('button', { type: 'button', class: 'link-button back-link', onclick: backToNote }, '← Back to note') : null;
@@ -422,6 +426,7 @@ function showNote(item, button = null, { updateHistory = true } = {}) {
   profileOpen = null;
   profileToken++;
   if (button) currentItem = item;
+  updateNoteNavigation();
 
   const { note, zaps, repostedBy } = item;
   const clientName = note.tags?.find(tag => tag[0] === 'client')?.[1];
@@ -563,6 +568,7 @@ function renderList(items, emptyMessage) {
     shownNoteId = null;
     mainEl.replaceChildren(el('p', { class: 'empty' }, emptyMessage));
   }
+  updateNoteNavigation();
   renderLoadMore();
   observeReplyPrefetch(items);
 }
@@ -802,6 +808,7 @@ async function loadFeed(feedId, { updateHistory = true, notice = '' } = {}) {
   const feed = isHome ? HOME_FEED : found || FEEDS.find(f => f.id === DEFAULT_FEED_ID);
   lastResult = null;
   selectedNoteId = null;
+  updateNoteNavigation();
   profileOpen = null;
   profileToken++;
   moreObserver?.disconnect();
@@ -1219,10 +1226,73 @@ const SIDEBAR_KEY = 'zs-sidebar-hidden';
 const sidebarShow = document.getElementById('sidebar-show');
 const sidebarHide = document.getElementById('sidebar-hide');
 
+function updateNoteNavigation() {
+  const buttons = [...listEl.querySelectorAll('.note-item')];
+  const index = buttons.findIndex(button => button.dataset.noteId === shownNoteId);
+  const available = document.body.classList.contains('sidebar-hidden') && !profileOpen && index !== -1;
+  noteNavigation.hidden = !available;
+  previousNoteButton.disabled = !available || index === 0;
+  nextNoteButton.disabled = !available || index === buttons.length - 1;
+}
+
+function moveBetweenNotes(direction) {
+  const buttons = [...listEl.querySelectorAll('.note-item')];
+  const index = buttons.findIndex(button => button.dataset.noteId === shownNoteId);
+  const target = buttons[index + direction];
+  if (!target) return false;
+  target.click();
+  return true;
+}
+
+previousNoteButton.addEventListener('click', () => moveBetweenNotes(-1));
+nextNoteButton.addEventListener('click', () => moveBetweenNotes(1));
+
+document.addEventListener('keydown', event => {
+  if (!document.body.classList.contains('sidebar-hidden') || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  if (event.target.closest('input, textarea, select, [contenteditable="true"]') || document.querySelector('dialog[open]')) return;
+
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+    if (!profileOpen && moveBetweenNotes(event.key === 'ArrowLeft' ? -1 : 1)) event.preventDefault();
+    return;
+  }
+  if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+
+  event.preventDefault();
+  const distance = Math.round(window.innerHeight * 0.75) * (event.key === 'ArrowDown' ? 1 : -1);
+  if (window.matchMedia('(max-width: 760px)').matches) {
+    window.scrollBy({ top: distance, behavior: 'smooth' });
+  } else {
+    mainEl.parentElement.scrollBy({ top: distance, behavior: 'smooth' });
+  }
+});
+
+let swipeStart = null;
+mainEl.addEventListener('touchstart', event => {
+  if (!document.body.classList.contains('sidebar-hidden') || event.touches.length !== 1) {
+    swipeStart = null;
+    return;
+  }
+  if (event.target.closest('button, a, input, textarea, select, [contenteditable="true"], .interaction-panel')) {
+    swipeStart = null;
+    return;
+  }
+  swipeStart = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+}, { passive: true });
+
+mainEl.addEventListener('touchend', event => {
+  if (!swipeStart || event.changedTouches.length !== 1) return;
+  const deltaX = event.changedTouches[0].clientX - swipeStart.x;
+  const deltaY = event.changedTouches[0].clientY - swipeStart.y;
+  swipeStart = null;
+  if (Math.abs(deltaX) < 55 || Math.abs(deltaX) < Math.abs(deltaY) * 1.4) return;
+  moveBetweenNotes(deltaX < 0 ? 1 : -1);
+}, { passive: true });
+
 function setSidebarHidden(hidden, { focus = false } = {}) {
   document.body.classList.toggle('sidebar-hidden', hidden);
   document.getElementById('sidebar').inert = hidden;
   sidebarShow.hidden = !hidden;
+  updateNoteNavigation();
   store.set(SIDEBAR_KEY, hidden);
   if (focus) (hidden ? sidebarShow : sidebarHide).focus();
 }

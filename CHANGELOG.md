@@ -6,6 +6,7 @@
 - Move profile identity beside the ZapSurf home control, reduce the name size, show the connection method beneath it, and make account actions equally sized.
 - Add icons for notification types, Activity, and Log out; highlight unread activity in green and remove the Settings button fill.
 - Show brand and profile icons when the sidebar is hidden, add horizontal padding to its launcher, and remove the controls summary when minimized.
+- Navigate between feed notes with desktop chevrons, mobile swipes, or left/right arrow keys when the sidebar is minimized; use up/down arrows to scroll.
 
 ## 0.4.0 - 2026-10-23
 
