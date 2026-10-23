@@ -15,6 +15,8 @@ import { el, isDirectReplyTo, isReply, now, store, formatSats, safeHttpUrl } fro
 import { buildReplyTree } from './reply-tree.mjs';
 import { notePath, parseViewPath, profilePath } from './view-routes.mjs';
 import { selectNewNotes } from './live-updates.mjs';
+import { fetchNotificationActivity } from './notification-service.js';
+import { mergeNotifications, notificationSince } from './notifications.mjs';
 
 const SORT_KEY = 'zs-sort';
 const stat = key => item => statsFor(item.note.id)[key];
@@ -57,7 +59,11 @@ const statusEl = document.getElementById('status');
 const listEl = document.getElementById('note-list');
 const mainEl = document.getElementById('main');
 const accountEl = document.getElementById('account');
+const accountProfileEl = document.getElementById('account-profile');
+const sidebarProfileIconEl = document.getElementById('sidebar-profile-icon');
 const newFeedNotesButton = document.getElementById('new-feed-notes');
+const notificationsDialog = document.getElementById('notifications-dialog');
+const notificationsListEl = document.getElementById('notifications-list');
 
 const HOME_FEED = { id: 'home', label: 'Home (following)', group: 'You', personal: true };
 const MAX_EMPTY_PAGES = 3;
@@ -83,6 +89,18 @@ let routeToken = 0;
 let routeNotice = '';
 let liveRefreshBusy = false;
 let lastLivePollAt = now();
+let notificationTrigger = null;
+let notificationBadge = null;
+let notificationToken = 0;
+let notificationState = {
+  pubkey: null,
+  ownNotes: [],
+  items: [],
+  readAt: null,
+  lastPollAt: null,
+  busy: false,
+  failed: false
+};
 
 function updatePath(path, replace = false) {
   if (location.pathname === path && !location.search && !location.hash) return;
@@ -481,7 +499,7 @@ function itemStats(noteId) {
 function updateNewFeedNotesButton(result = lastResult) {
   const count = result?.pendingNewNotes?.length || 0;
   newFeedNotesButton.hidden = count === 0;
-  newFeedNotesButton.textContent = `Insert ${count} new ${count === 1 ? 'note' : 'notes'}`;
+  newFeedNotesButton.textContent = `${count} new ${count === 1 ? 'note' : 'notes'}`;
 }
 
 async function insertNewFeedNotes() {
@@ -866,29 +884,172 @@ function renderFeedOptions(selectedId) {
 
 // ---------- Account ----------
 
+function notificationStorageKey(pubkey) {
+  return `zs-notifications:${pubkey}`;
+}
+
+function saveNotificationReadAt() {
+  if (!notificationState.pubkey || !Number.isFinite(notificationState.readAt)) return;
+  try {
+    store.set(notificationStorageKey(notificationState.pubkey), { readAt: notificationState.readAt });
+  } catch { /* Keep notifications usable when browser storage is unavailable. */ }
+}
+
+function setNotificationAccount(pubkey) {
+  if (notificationState.pubkey === pubkey) return;
+  if (notificationsDialog.open) notificationsDialog.close();
+  notificationToken++;
+  const saved = pubkey ? store.get(notificationStorageKey(pubkey), null) : null;
+  notificationState = {
+    pubkey,
+    ownNotes: [],
+    items: [],
+    readAt: pubkey && Number.isFinite(saved?.readAt) ? saved.readAt : pubkey ? now() : null,
+    lastPollAt: null,
+    busy: false,
+    failed: false
+  };
+  if (pubkey && !Number.isFinite(saved?.readAt)) saveNotificationReadAt();
+  updateNotificationBadge();
+}
+
+function updateNotificationBadge() {
+  if (!notificationTrigger || !notificationBadge) return;
+  const unread = notificationState.items.filter(item => item.created_at > notificationState.readAt).length;
+  notificationBadge.textContent = unread > 99 ? '99+' : String(unread);
+  notificationBadge.hidden = unread === 0;
+  notificationTrigger.classList.toggle('has-unread', unread > 0);
+  notificationTrigger.setAttribute('aria-label', unread ? `Activity, ${unread} unread` : 'Activity');
+  notificationTrigger.title = unread ? `${unread} unread notifications` : 'Activity notifications';
+}
+
+function notificationDescription(item) {
+  if (item.type === 'reply') return 'replied to your note';
+  if (item.type === 'mention') return 'mentioned you';
+  if (item.type === 'like') return 'liked your note';
+  if (item.type === 'repost') return 'reposted your note';
+  return `zapped ${formatSats(item.zap.sats)} sats`;
+}
+
+function notificationIcon(type) {
+  const glyphs = { reply: '↩', mention: '@', like: '♥', repost: '↻', zap: '⚡' };
+  return el('span', { class: `notification-type-icon ${type}`, 'aria-hidden': 'true' }, glyphs[type] || '•');
+}
+
+function renderNotificationList() {
+  if (!notificationState.items.length) {
+    const message = notificationState.failed
+      ? 'Could not load activity. It will retry while ZapSurf is open.'
+      : 'No activity in the last 30 days.';
+    notificationsListEl.replaceChildren(el('p', { class: 'notifications-empty', role: 'status' }, message));
+    return;
+  }
+  notificationsListEl.replaceChildren(...notificationState.items.map(item => {
+    const actor = parseProfile(item.event.pubkey).name;
+    const preview = item.type === 'zap'
+      ? item.zap.comment
+      : ['reply', 'mention'].includes(item.type) ? item.event.content : '';
+    return el('button', {
+      type: 'button',
+      class: 'notification-item',
+      role: 'listitem',
+      onclick: () => {
+        notificationsDialog.close();
+        updatePath(notePath(item.targetId, nip19));
+        restoreLocation();
+      }
+    },
+    el('span', { class: 'notification-row' },
+      notificationIcon(item.type),
+      el('span', { class: 'notification-copy' },
+        el('span', { class: 'notification-heading' },
+          el('span', {}, `${actor} ${notificationDescription(item)}`),
+          timeEl(item.created_at)),
+        preview ? el('span', { class: 'notification-preview' }, preview) : null)));
+  }));
+}
+
+function openNotifications() {
+  if (!notificationState.pubkey) return;
+  notificationState.readAt = now();
+  saveNotificationReadAt();
+  updateNotificationBadge();
+  renderNotificationList();
+  notificationsDialog.showModal();
+}
+
+async function pollNotifications() {
+  if (document.visibilityState !== 'visible') return;
+  const pubkey = getSession()?.pubkey;
+  if (!pubkey) return;
+  if (notificationState.pubkey !== pubkey) setNotificationAccount(pubkey);
+  if (notificationState.busy) return;
+
+  notificationState.busy = true;
+  const token = notificationToken;
+  const pollStartedAt = now();
+  const since = notificationSince({ lastPollAt: notificationState.lastPollAt, now: pollStartedAt });
+  try {
+    const result = await fetchNotificationActivity(pubkey, since, notificationState.ownNotes);
+    if (token !== notificationToken || getSession()?.pubkey !== pubkey) return;
+    notificationState.ownNotes = result.ownNotes;
+    notificationState.items = mergeNotifications(notificationState.items, result.notifications);
+    notificationState.lastPollAt = pollStartedAt;
+    notificationState.failed = false;
+    updateNotificationBadge();
+    if (notificationsDialog.open) renderNotificationList();
+  } catch {
+    if (token !== notificationToken) return;
+    notificationState.failed = true;
+    if (notificationsDialog.open) renderNotificationList();
+  } finally {
+    if (token === notificationToken) notificationState.busy = false;
+  }
+}
+
 function settingsButton() {
-  return el('button', { class: 'button secondary small', type: 'button', onclick: openSettings }, '⚙️ Settings');
+  return el('button', { class: 'button ghost small settings-button', type: 'button', onclick: openSettings }, '⚙️ Settings');
 }
 
 function renderAccount() {
   const session = getSession();
+  accountProfileEl.replaceChildren();
+  sidebarProfileIconEl.replaceChildren();
+  sidebarProfileIconEl.hidden = !session;
+  notificationTrigger = null;
+  notificationBadge = null;
   if (!session) {
     accountEl.replaceChildren(
-      el('div', { class: 'account-actions' },
+      el('div', { class: 'account-actions signed-out' },
         settingsButton(),
         el('button', { class: 'button small', type: 'button', onclick: openLoginDialog }, 'Log in')));
     return;
   }
   const profile = parseProfile(session.pubkey);
-  accountEl.replaceChildren(
+  notificationBadge = el('span', { class: 'notification-badge', hidden: true });
+  notificationTrigger = el('button', {
+    class: 'button ghost small notification-trigger',
+    type: 'button',
+    onclick: openNotifications,
+    'aria-label': 'Activity'
+  },
+  el('span', { class: 'button-icon', 'aria-hidden': 'true' }, '🔔'),
+  'Activity', notificationBadge);
+  accountProfileEl.replaceChildren(
     el('button', { type: 'button', class: 'account-who profile-link', title: 'View your profile', onclick: () => showProfile(session.pubkey) },
       avatar(session.pubkey, 'small'),
       el('div', { class: 'account-info' },
         el('span', { class: 'author-name' }, profile.name),
-        el('span', { class: 'account-method' }, LOGIN_METHODS[session.method]))),
-    el('div', { class: 'account-actions' },
+        el('span', { class: 'account-method' }, LOGIN_METHODS[session.method]))));
+  sidebarProfileIconEl.replaceChildren(avatar(session.pubkey, 'small'));
+  accountEl.replaceChildren(
+    el('div', { class: 'account-actions signed-in' },
+      notificationTrigger,
       settingsButton(),
-      el('button', { class: 'button ghost small', type: 'button', onclick: logout }, 'Log out')));
+      el('button', { class: 'button ghost small', type: 'button', onclick: logout },
+        el('span', { class: 'button-icon', 'aria-hidden': 'true' }, '↪'),
+        'Log out')));
+  updateNotificationBadge();
   const newNoteButton = document.getElementById('new-note');
   newNoteButton.replaceChildren(el('img', { class: 'new-note-icon', src: 'send-message-icon.webp', alt: '', 'aria-hidden': 'true' }), 'New note');
   newNoteButton.hidden = !canSign();
@@ -984,6 +1145,7 @@ window.addEventListener('popstate', restoreLocation);
 
 document.addEventListener('zs:session', () => {
   const session = getSession();
+  setNotificationAccount(session?.pubkey || null);
   renderAccount();
   document.getElementById('new-note').hidden = !canSign();
   const wasPersonal = [HOME_FEED, ...FEEDS].some(f => f.id === feedSelect.value && f.personal);
@@ -994,6 +1156,7 @@ document.addEventListener('zs:session', () => {
   else if (route.type === 'note') restoreLocation();
   else loadFeed(feedSelect.value);
   loadOwnProfile();
+  pollNotifications();
 });
 
 document.addEventListener('zs:need-login', openLoginDialog);
@@ -1025,40 +1188,28 @@ sortSelect.addEventListener('change', () => {
   listEl.scrollTop = 0;
 });
 document.getElementById('new-note').addEventListener('click', () => openComposer());
+document.getElementById('notifications-close').addEventListener('click', () => notificationsDialog.close());
 
 // ---------- Collapsible sidebar controls ----------
 
 const CONTROLS_KEY = 'zs-controls-collapsed';
 const controlsToggle = document.getElementById('controls-toggle');
 const controlsEl = document.getElementById('sidebar-controls');
-const controlsSummary = document.getElementById('controls-summary');
-
-function updateControlsSummary() {
-  const feed = feedSelect.selectedOptions[0]?.textContent || '';
-  const sort = sortSelect.selectedOptions[0]?.textContent || '';
-  controlsSummary.textContent = [feed, sort].filter(Boolean).join(' · ');
-}
 
 function setControlsCollapsed(collapsed) {
   controlsEl.hidden = collapsed;
-  controlsSummary.hidden = !collapsed;
   controlsEl.parentElement.classList.toggle('collapsed', collapsed);
   controlsToggle.setAttribute('aria-expanded', String(!collapsed));
   const label = collapsed ? 'Show controls' : 'Hide controls';
   controlsToggle.setAttribute('aria-label', label);
   controlsToggle.title = label;
-  updateControlsSummary();
   store.set(CONTROLS_KEY, collapsed);
 }
 
 controlsToggle.addEventListener('click', () => setControlsCollapsed(!controlsEl.hidden));
-feedSelect.addEventListener('change', updateControlsSummary);
-sortSelect.addEventListener('change', updateControlsSummary);
-document.addEventListener('zs:session', updateControlsSummary);
 document.getElementById('home-button').addEventListener('click', () => {
   const homeId = getSession() ? HOME_FEED.id : DEFAULT_FEED_ID;
   feedSelect.value = homeId;
-  updateControlsSummary();
   loadFeed(homeId);
 });
 
@@ -1085,11 +1236,16 @@ document.getElementById('new-note').hidden = !canSign();
 renderFeedOptions(getSession() ? HOME_FEED.id : DEFAULT_FEED_ID);
 restoreLocation();
 setInterval(pollLiveUpdates, LIVE_REFRESH_MS);
+setInterval(pollNotifications, LIVE_REFRESH_MS);
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') pollLiveUpdates();
+  if (document.visibilityState === 'visible') {
+    pollLiveUpdates();
+    pollNotifications();
+  }
 });
 setControlsCollapsed(store.get(CONTROLS_KEY) === true);
 document.body.classList.add('no-anim');
 setSidebarHidden(store.get(SIDEBAR_KEY) === true);
 requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.remove('no-anim')));
 loadOwnProfile();
+pollNotifications();

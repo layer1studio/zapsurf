@@ -51,6 +51,10 @@ test('rejects invalid receipt and request signatures', async () => {
   })), null);
 });
 
+test('ignores malformed tag entries', async () => {
+  assert.equal(await validate(receiptWith({ tags: [null, ['P', sender]] })), null);
+});
+
 test('rejects a receipt signed by a key other than the recipient provider', async () => {
   assert.equal(await validate(receiptWith(), { getProviderPubkey: async () => '4'.repeat(64) }), null);
   assert.equal(await validate(receiptWith(), { getProviderPubkey: async () => null }), null);

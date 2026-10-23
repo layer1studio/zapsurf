@@ -103,26 +103,29 @@ export async function loadNoteZaps(note) {
     kinds: [9735], '#e': [note.id], limit: 5000
   }, { maxWait: 8000 });
   const uniqueReceipts = [...new Map(receipts.map(receipt => [receipt.id, receipt])).values()];
-  const zaps = await Promise.all(uniqueReceipts.map(async receipt => {
-    if (!receipt.tags?.some(tag => tag[0] === 'e' && tag[1] === note.id)) return null;
-    const sender = receipt.tags.find(tag => tag[0] === 'P')?.[1];
-    const zap = await validateZapReceipt(receipt, sender, {
-      verifyEvent,
-      getProviderPubkey: providerPubkeyFor,
-      getBolt11AmountMsats: bolt11AmountMsats
-    });
-    if (!zap || zap.recipient !== note.pubkey) return null;
-
-    let request;
-    try {
-      request = JSON.parse(receipt.tags.find(tag => tag[0] === 'description')[1]);
-    } catch {
-      return null;
-    }
-    if (!request.tags?.some(tag => tag[0] === 'e' && tag[1] === note.id)) return null;
-    return { ...zap, createdAt: receipt.created_at, id: receipt.id };
-  }));
+  const zaps = await Promise.all(uniqueReceipts.map(receipt => validateZapForNote(receipt, note)));
   return zaps.filter(Boolean).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function validateZapForNote(receipt, note) {
+  const tags = Array.isArray(receipt.tags) ? receipt.tags.filter(Array.isArray) : [];
+  if (!tags.some(tag => tag[0] === 'e' && tag[1] === note.id)) return null;
+  const sender = tags.find(tag => tag[0] === 'P')?.[1];
+  const zap = await validateZapReceipt(receipt, sender, {
+    verifyEvent,
+    getProviderPubkey: providerPubkeyFor,
+    getBolt11AmountMsats: bolt11AmountMsats
+  });
+  if (!zap || zap.recipient !== note.pubkey) return null;
+
+  let request;
+  try {
+    request = JSON.parse(tags.find(tag => tag[0] === 'description')[1]);
+  } catch {
+    return null;
+  }
+  if (!request.tags?.some(tag => Array.isArray(tag) && tag[0] === 'e' && tag[1] === note.id)) return null;
+  return { ...zap, createdAt: receipt.created_at, id: receipt.id };
 }
 
 export function cachedZapCount(pubkey) {

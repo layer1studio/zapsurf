@@ -1,6 +1,6 @@
 function tagValues(event, name) {
   return Array.isArray(event?.tags)
-    ? event.tags.filter(tag => tag[0] === name).map(tag => tag[1])
+    ? event.tags.filter(tag => Array.isArray(tag) && tag[0] === name).map(tag => tag[1])
     : [];
 }
 

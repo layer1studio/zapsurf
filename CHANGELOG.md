@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.7 - 2026-10-23
+
+- Add an in-app Activity inbox for replies, mentions, likes, reposts, and verified incoming zaps, with 30-day activity history, per-account unread state, and foreground polling. Include recent activity on older authored notes.
+- Move profile identity beside the ZapSurf home control, reduce the name size, show the connection method beneath it, and make account actions equally sized.
+- Add icons for notification types, Activity, and Log out; highlight unread activity in green and remove the Settings button fill.
+- Show brand and profile icons when the sidebar is hidden, add horizontal padding to its launcher, and remove the controls summary when minimized.
+
 ## 0.4.0 - 2026-10-23
 
 - Add shareable root-level profile and note URLs using NIP-19 identifiers, with browser-history navigation and Vercel deep-link rewrites.

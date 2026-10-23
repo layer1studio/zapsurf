@@ -24,14 +24,14 @@
   <meta name="twitter:image:alt" content="ZapSurf Nostr client showing a note feed and discussion thread.">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <meta name="theme-color" content="#0e0f13">
-  <link rel="stylesheet" href="styles.css?v=0.4.0">
+  <link rel="stylesheet" href="styles.css?v=0.5.7">
 </head>
 <body>
   <aside class="sidebar" id="sidebar">
     <header class="sidebar-header">
       <div class="title-row">
         <h1><button type="button" id="home-button" class="brand-home" title="Home" aria-label="ZapSurf home"><img class="brand-icon" src="favicon.svg" alt="" aria-hidden="true">ZapSurf</button></h1>
-        <span id="controls-summary" class="controls-summary" hidden></span>
+        <div id="account-profile" class="account-profile"></div>
         <button type="button" id="controls-toggle" class="chevron-button" aria-expanded="true" aria-controls="sidebar-controls" aria-label="Hide controls" title="Hide controls">
           <span class="chevron" aria-hidden="true"></span>
         </button>
@@ -64,11 +64,19 @@
   </div>
 
   <button type="button" id="sidebar-show" class="sidebar-fab" aria-controls="sidebar" aria-label="Show sidebar" title="Show sidebar" hidden>
-    <span aria-hidden="true">⚡</span>
-    <span class="chevron chevron-right" aria-hidden="true"></span>
+    <img class="brand-icon" src="favicon.svg" alt="" aria-hidden="true">
+    <span id="sidebar-profile-icon" class="sidebar-profile-icon" hidden></span>
   </button>
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <dialog id="notifications-dialog" class="modal notifications-modal" aria-labelledby="notifications-title">
+    <div class="dialog-header">
+      <h2 id="notifications-title">Activity</h2>
+      <button type="button" class="icon-button" id="notifications-close" aria-label="Close notifications">✕</button>
+    </div>
+    <div id="notifications-list" class="notifications-list" role="list"></div>
+  </dialog>
 
   <dialog id="login-dialog" class="modal">
     <div class="dialog-header">
@@ -210,6 +218,6 @@
     </section>
   </dialog>
 
-  <script type="module" src="js/main.js?v=0.4.0"></script>
+  <script type="module" src="js/main.js?v=0.5.7"></script>
 </body>
 </html>
