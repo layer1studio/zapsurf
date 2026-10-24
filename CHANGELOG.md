@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Add a responsive one-to-one DM inbox with NIP-17 messages, NIP-44 encryption, NIP-59 gift wrapping, sender history copies, authenticated inbox relays, retry controls, and older-message loading.
+- Discover and configure kind-10050 DM inbox relays, support extension, remote, and encrypted-local-key signers, and keep decrypted messages and drafts out of persistent storage.
+- Read existing legacy NIP-04 conversations and offer an explicit per-conversation legacy-send switch with a metadata-privacy warning; keep NIP-17 as the default and never downgrade automatically.
+- Check recipient inbox readiness before enabling Send, show actionable disabled-button reasons, and place a teal Messages button beside New note with matching dimensions.
+- Add focused DM protocol, relay routing, retry, signer-denial, history, recipient-readiness, and legacy opt-in regression tests.
+
 ## 0.6.0 - 2026-10-24
 
 - Add an All Activity link to profiles, opening a shareable timeline of original posts, replies, likes and reactions, reposts, verified sent zaps, and new follows.

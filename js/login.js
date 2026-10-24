@@ -90,7 +90,9 @@ document.getElementById('nostrconnect-show').addEventListener('click', async () 
     clientPubkey: getPublicKey(clientSecret),
     relays: NOSTRCONNECT_RELAYS,
     secret: crypto.randomUUID().replaceAll('-', ''),
-    perms: ['sign_event:1', 'sign_event:6', 'sign_event:7', 'sign_event:9734'],
+    perms: ['sign_event:1', 'sign_event:6', 'sign_event:7', 'sign_event:9734',
+      'sign_event:13', 'sign_event:10050', 'sign_event:22242', 'nip44_encrypt', 'nip44_decrypt', 'nip04_decrypt',
+      'sign_event:4', 'nip04_encrypt'],
     name: 'ZapSurf',
     url: location.origin
   });

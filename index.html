@@ -41,7 +41,10 @@
       </div>
       <div id="sidebar-controls" class="sidebar-controls">
         <div id="account" class="account"></div>
-        <button type="button" id="new-note" class="button new-note" hidden>✏️ New note</button>
+        <div class="compose-actions">
+          <button type="button" id="new-note" class="button new-note" hidden>✏️ New note</button>
+          <button type="button" id="new-message" class="button new-note new-message" hidden>Messages</button>
+        </div>
         <label class="feed-label" for="feed-select">Feed</label>
         <select id="feed-select"></select>
         <label class="feed-label sort-label" for="sort-select">Sort by</label>

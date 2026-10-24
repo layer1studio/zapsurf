@@ -35,10 +35,24 @@ Set the minimum to 0 in Settings to show everyone. In the Home feed, you can als
 - Write notes and replies, and like, repost, or quote notes.
 - Send Lightning zaps with WebLN or a Nostr Wallet Connect wallet, with configurable one-tap amounts.
 
+## Private messages
+
+Open **Messages** beside **New note**, or the envelope icon on another person's profile, to use one-to-one text messages. NIP-17 is the default, using NIP-44 v2 encryption and NIP-59 gift wraps. Existing NIP-04 conversations can also be read. The per-conversation **Use legacy DM (NIP-04)** switch explicitly enables legacy sending; it is off by default and resets when changing conversations or closing Messages. Legacy messages expose sender, recipient, and timing metadata. There is no automatic downgrade. Groups, attachments, and read receipts are not supported.
+
+Your signer must support NIP-44 encryption and decryption for secure mode, or NIP-04 encryption and decryption for legacy mode. Browser extensions, NIP-46 remote signers, and unlocked encrypted local keys are supported; read-only accounts cannot read or send DMs. Existing remote-signer connections may need additional encryption, kind-13 or kind-4 signing, and relay-authentication permissions.
+
+Set 1-3 `wss://` relays under **Inbox relays** in Messages. Choose relays that accept kind 1059 and preferably enforce NIP-42 authentication and recipient-only reads. ZapSurf advertises them in a public kind-10050 event. In secure mode, each message is sent only to the recipient's advertised DM relays, with a separate encrypted history copy sent to your own advertised inbox. Send stays disabled while recipient readiness is checked or no recipient inbox is advertised. Legacy mode uses existing account relays and does not require kind-10050 inbox lists; relay acceptance does not guarantee the recipient supports legacy messages. Failed copies can be retried while the inbox remains open; retries reuse the original encrypted event. Relay acceptance is not a delivery or read receipt.
+
+The inbox initially requests up to 200 recent secure envelopes per relay without an age cutoff, plus up to 100 received and 100 sent legacy messages from your account's existing relays. Inbox-list discovery also checks account relay hints. **Load older messages** fetches earlier history. Legacy history can be read without configuring a new NIP-17 inbox; sending secure messages still requires advertised DM inbox relays. Existing signers may request `nip04_decrypt` permission for legacy history. The in-memory view is bounded to 1,000 messages. Decrypted messages and drafts are not persisted, do not load remote media or link previews, and are cleared when Messages closes or the account changes. History availability depends on relay retention.
+
+NIP-17 does not provide cryptographic forward secrecy or post-compromise security. Someone who obtains an identity private key can decrypt previously recorded messages. Relays can still observe recipient routing and connection metadata; gift wrapping does not provide network anonymity.
+
+Run the automated tests with `node --test test/*.test.mjs`.
+
 ## TODO
 
 - [ ] Build a primary navigation menu for moving between feeds, profiles, messages, and settings.
-- [ ] Add direct messages, including an inbox, conversation view, and encrypted message send/receive.
-- [ ] Decide which encrypted DM protocols and compatibility paths to support; handle relay discovery and available signer capabilities.
+- [x] Add direct messages, including an inbox, conversation view, and encrypted message send/receive.
+- [x] Use NIP-17/NIP-44/NIP-59 with dedicated DM relay discovery and signer capability handling; no automatic legacy downgrade.
 - [ ] Add automated tests for feed loading, signing, and zap flows.
 - [ ] Review keyboard navigation and mobile layouts as the menu and messaging views are added.

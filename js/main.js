@@ -20,6 +20,7 @@ import { mergeNotifications, notificationSince } from './notifications.mjs';
 import { createUserActivityLoader, getCachedUserActivity } from './user-activity-service.js';
 import { filterActivity, mergeActivity } from './user-activity.mjs';
 import { contentCache } from './cache.mjs';
+import { messageButton } from './messages-ui.js';
 
 const SORT_KEY = 'zs-sort';
 const stat = key => item => statsFor(item.note.id)[key];
@@ -314,7 +315,7 @@ async function showProfile(pubkey, { updateHistory = true } = {}) {
         el('div', { class: 'note-meta' },
           el('div', { class: 'author-line' }, el('span', { class: 'author-name' }, profile.name), badge(zaps, cachedZapSats(pubkey))),
           typeof data.nip05 === 'string' && data.nip05 ? el('div', { class: 'note-time' }, data.nip05) : null),
-        el('div', { class: 'profile-actions' }, followButton(pubkey))),
+        el('div', { class: 'profile-actions' }, canSign() && !isOwn(pubkey) ? messageButton(pubkey) : null, followButton(pubkey))),
       typeof data.about === 'string' && data.about ? renderContent(data.about, 'note-content profile-about') : null,
       el('dl', { class: 'profile-meta' },
         website ? [el('dt', {}, 'Website'), el('dd', {}, el('a', { href: website, target: '_blank', rel: 'noopener noreferrer' }, website))] : null,
@@ -1325,6 +1326,7 @@ function settingsButton() {
 
 function renderAccount() {
   const session = getSession();
+  document.getElementById('new-message').hidden = !canSign();
   accountProfileEl.replaceChildren();
   sidebarProfileIconEl.replaceChildren();
   sidebarProfileIconEl.hidden = !session;
