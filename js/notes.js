@@ -3,6 +3,7 @@ import { pool, PROFILE_RELAYS, DEFAULT_RELAYS, profiles, rememberProfile, statsF
 import { fetchRelayLists, getWriteRelays, planOutbox, uniqueRelays } from './relays.js';
 import { chunk, now, isReply, isDirectReplyTo, emit } from './util.js';
 import { contentCache } from './cache.mjs';
+import { createFollowerCountLoader, FOLLOWER_COUNT_CACHE_MS } from './follower-count.mjs';
 
 const HOME_WINDOW_HOURS = 48;
 const HOME_LIMIT = 150;
@@ -37,10 +38,35 @@ const HEX_PUBKEY = /^[0-9a-f]{64}$/;
 const followsFrom = contactList =>
   new Set(contactList?.tags.filter(tag => tag[0] === 'p' && HEX_PUBKEY.test(tag[1] || '')).map(tag => tag[1]) || []);
 
+function queryFollowerEvents(relays, filter) {
+  return new Promise((resolve, reject) => {
+    const events = [];
+    pool.subscribeEose(relays, filter, {
+      maxWait: QUERY_WAIT_MS,
+      onevent: event => events.push(event),
+      onclose: results => {
+        if (results?.some(result => result.reason === 'closed automatically on eose')) resolve(events);
+        else reject(new Error('No follower count relays completed the query.'));
+      }
+    });
+  });
+}
+
 // Always queries relays, so it can be used as the base for editing a contact list.
 export async function fetchContactList(pubkey) {
   const relays = uniqueRelays(PROFILE_RELAYS, await getWriteRelays(pubkey));
   return newest(await pool.querySync(relays, { kinds: [3], authors: [pubkey] }, { maxWait: QUERY_WAIT_MS }));
+}
+
+const loadFollowerCount = createFollowerCountLoader({
+  query: queryFollowerEvents,
+  cache: contentCache,
+  relays: uniqueRelays(PROFILE_RELAYS, DEFAULT_RELAYS),
+  ttlMs: FOLLOWER_COUNT_CACHE_MS
+});
+
+export function fetchFollowerCount(pubkey) {
+  return loadFollowerCount(pubkey);
 }
 
 export async function getFollows(pubkey) {

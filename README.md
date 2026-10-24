@@ -33,6 +33,8 @@ Set the minimum to 0 in Settings to show everyone. In the Home feed, you can als
 - Share activity pages at `/<npub>/activity` or `/<nprofile>/activity`. For local deep-link refresh support, append `--proxy 'http://127.0.0.1:8080?'` to the server command above.
 - Sign in with a NIP-07 browser extension, a NIP-46 remote signer, an encrypted private key, or in read-only mode.
 - Write notes and replies, and like, repost, or quote notes.
+- Upload multiple images from note and reply toolbars to your first advertised Blossom server (kind 10063). If none is listed, save an account-specific fallback server in Settings. Uploads require a signer and an HTTPS, browser-accessible Blossom server. JPEG, PNG, GIF, WebP and AVIF images up to 20 MiB each are supported. Original files, including any embedded metadata, are uploaded publicly; removing a URL from a draft does not delete the uploaded file.
+- Read quoted notes inline with their images, videos and link previews. Nested quotes are bounded, and unavailable notes retain an external link.
 - Send Lightning zaps with WebLN or a Nostr Wallet Connect wallet, with configurable one-tap amounts.
 
 ## Private messages

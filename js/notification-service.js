@@ -1,6 +1,7 @@
 import { verifyEvent } from './deps.js';
 import { pool } from './state.js';
 import { fetchRelayLists, getReadRelays, getWriteRelays, uniqueRelays } from './relays.js';
+import { ensureProfiles } from './notes.js?v=0.4.0';
 import { validateZapForNote } from './zapcount.js';
 import { chunk } from './util.js';
 import { classifyNotifications, replyParentId, selectOwnedNotes, MAX_OWN_NOTES } from './notifications.mjs';
@@ -93,8 +94,8 @@ export async function fetchNotificationActivity(pubkey, since, previousNotes = [
     if (zap) validatedZaps.set(receipt.id, zap);
   }));
 
-  return {
-    ownNotes,
-    notifications: classifyNotifications({ events, ownNotes, pubkey, validatedZaps })
-  };
+  const notifications = classifyNotifications({ events, ownNotes, pubkey, validatedZaps });
+  await ensureProfiles(notifications.map(item => item.event.pubkey));
+
+  return { ownNotes, notifications };
 }

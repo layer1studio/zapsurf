@@ -689,6 +689,50 @@ a:focus-visible {
 .profile-meta dt { color: var(--muted); }
 .profile-meta dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .profile-meta .npub { display: flex; gap: 10px; align-items: center; }
+.profile-followers-value { display: flex; align-items: center; gap: 6px; }
+.follower-help { position: relative; display: inline-flex; }
+.follower-help-button {
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: help;
+}
+.follower-help-button:hover { color: var(--text); }
+.follower-help-popup {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 8px);
+  left: 0;
+  width: min(270px, calc(100vw - 40px));
+  padding: 9px 11px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+  line-height: 1.45;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.follower-help:hover .follower-help-popup,
+.follower-help-button:focus-visible + .follower-help-popup,
+.follower-help-button[aria-expanded="true"] + .follower-help-popup {
+  visibility: visible;
+  opacity: 1;
+}
 
 .profile-notes {
   padding-top: 20px;
@@ -884,6 +928,7 @@ a:focus-visible {
 
 .compose-modal { width: min(900px, calc(100vw - 32px)); }
 .compose-modal #compose-text { min-height: 220px; }
+.compose-modal #compose-context:not(:empty) { max-height: min(30vh, 260px); overflow: auto; margin-bottom: 12px; }
 
 .notifications-modal { width: min(560px, calc(100vw - 32px)); }
 .notifications-list {
@@ -1153,6 +1198,13 @@ textarea {
 .char-count, .form-status { color: var(--muted); font-size: 12px; }
 
 .compose-tools { display: grid; gap: 8px; min-width: 0; }
+.compose-tool-buttons { display: flex; align-items: center; gap: 6px; }
+.compose-tool-buttons .icon-button { width: 34px; height: 32px; padding: 0; }
+.upload-row { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.upload-row:has(.upload-status:empty) { display: none; }
+.upload-status { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; min-width: 0; }
+.upload-status a { color: var(--accent); }
+.upload-row .icon-button { flex: 0 0 30px; }
 .emoji-toggle { width: 34px; height: 32px; padding: 0; }
 .emoji-picker {
   display: grid;
@@ -1194,6 +1246,7 @@ textarea {
   font: inherit;
   cursor: pointer;
 }
+.emoji-choice { display: grid; place-items: center; font-size: 26px; line-height: 1; }
 .emoji-choice:hover, .mention-option:hover, .mention-option[aria-selected="true"] { background: var(--accent-soft); }
 .mention-suggestions {
   display: grid;
@@ -1216,7 +1269,23 @@ textarea {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
+  min-width: 0;
+  margin: 10px 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
+.quote-header { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 10px; }
+.quote-author { display: inline-flex; align-items: center; gap: 8px; min-width: 0; text-align: left; }
+.quote-author .author-name { overflow-wrap: anywhere; min-width: 0; }
+.note-content .quote-author .avatar { width: 28px; height: 28px; margin: 0; border-radius: 50%; flex: 0 0 28px; }
+.quote-header .note-time { margin-left: auto; font-size: 11px; }
+.quote-content { white-space: pre-wrap; font-size: 14px; line-height: 1.6; margin: 0 0 8px; }
+.quote-content img, .quote-content video { max-width: 100%; height: auto; }
+.quote-open { font-size: 12px; }
+.quote-loading { min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+.quote-preview.nested-quote { border: 0; border-left: 2px solid var(--border); border-radius: 0; background: transparent; padding: 4px 0 4px 12px; }
+.image-upload[disabled], .compose-tool-buttons button[disabled] { opacity: .5; }
+.upload-row [hidden] { display: none; }
 
 .presets {
   display: flex;

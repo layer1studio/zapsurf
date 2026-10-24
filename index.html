@@ -218,6 +218,20 @@
       <select id="default-zap" aria-label="Default zap amount"></select>
     </section>
     <section class="login-option">
+      <h3>Blossom</h3>
+      <p id="blossom-server-status" class="hint" role="status"></p>
+      <form id="blossom-form" class="stacked-form">
+        <label class="field" for="blossom-server">Fallback image server
+          <input id="blossom-server" type="url" placeholder="https://blossom.example" autocomplete="url" spellcheck="false">
+        </label>
+        <div class="dialog-actions">
+          <button type="button" class="button secondary" id="blossom-clear">Clear</button>
+          <button type="submit" class="button">Save</button>
+        </div>
+      </form>
+      <p id="blossom-settings-error" class="form-error" role="alert"></p>
+    </section>
+    <section class="login-option">
       <h3>Wallet</h3>
       <p id="wallet-status" class="hint"></p>
       <form id="nwc-form" class="stacked-form">

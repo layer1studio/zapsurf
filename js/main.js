@@ -1,6 +1,6 @@
 import { pool, PROFILE_RELAYS, rememberProfile, profiles, parseProfile, ensureProfile, settings, MAX_MIN_ZAP_SATS, statsFor, actionsFor } from './state.js';
 import { FEEDS, DEFAULT_FEED_ID, loadTrendingItems } from './primal.js';
-import { loadHomeItems, loadThread as fetchThread, prefetchThread, ensureProfiles, loadNoteStats, refreshNoteStats, pollRecentNotes, refreshThread, loadProfileNotes, getCachedProfileNotes, refreshProfileNotes, loadNoteEvent, fetchContactList } from './notes.js?v=0.4.0';
+import { loadHomeItems, loadThread as fetchThread, prefetchThread, ensureProfiles, loadNoteStats, refreshNoteStats, pollRecentNotes, refreshThread, loadProfileNotes, getCachedProfileNotes, refreshProfileNotes, loadNoteEvent, fetchContactList, fetchFollowerCount } from './notes.js?v=0.4.0';
 import { countRecentZapsSent, loadNoteZaps as fetchNoteZaps, cachedZapCount, cachedZapSats, cacheZapSummary, hasCachedZapSummary } from './zapcount.js';
 import { getSession, canSign, isOwn, logout, LOGIN_METHODS } from './signer.js';
 import { avatar, authorLine, badge, repostLine, renderContent, timeEl } from './render.js';
@@ -255,6 +255,11 @@ document.addEventListener('zs:follows', ({ detail }) => {
   }
 });
 
+document.addEventListener('zs:open-note', ({ detail: note }) => {
+  document.getElementById('compose-dialog').close();
+  showNote({ note, zaps: cachedZapCount(note.pubkey) });
+});
+
 function profileData(pubkey) {
   try {
     return JSON.parse(profiles.get(pubkey)?.content || '{}') || {};
@@ -271,7 +276,7 @@ function backToNote() {
 
 function profileNoteCard(note, zaps) {
   return el('article', { class: 'profile-note' },
-    renderContent(note.content, 'note-content profile-note-content'),
+    renderContent(note.content, 'note-content profile-note-content', { event: note }),
     el('div', { class: 'profile-note-footer' },
       timeEl(note.created_at),
       itemStats(note.id),
@@ -298,10 +303,25 @@ async function showProfile(pubkey, { updateHistory = true } = {}) {
   const notesEl = el('section', { class: 'profile-notes' },
     el('p', { class: 'replies-status busy' }, 'Loading notes from their relays…'));
   const view = el('article', { class: 'note profile' });
+  view.addEventListener('click', event => {
+    const helpButton = view.querySelector('.follower-help-button');
+    if (helpButton && !helpButton.parentElement.contains(event.target)) helpButton.setAttribute('aria-expanded', 'false');
+  });
+  view.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    const helpButton = view.querySelector('.follower-help-button');
+    if (helpButton?.getAttribute('aria-expanded') === 'true') {
+      helpButton.setAttribute('aria-expanded', 'false');
+      helpButton.focus();
+    }
+  });
   mainEl.replaceChildren(view);
   mainEl.parentElement.scrollTop = 0;
 
-  const render = (zaps = cachedZapCount(pubkey), followsCount = null) => {
+  let zaps = cachedZapCount(pubkey);
+  let followsCount = null;
+  let followersCount = null;
+  const render = () => {
     const data = profileData(pubkey);
     const profile = parseProfile(pubkey);
     const banner = safeHttpUrl(data.banner || '');
@@ -316,11 +336,29 @@ async function showProfile(pubkey, { updateHistory = true } = {}) {
           el('div', { class: 'author-line' }, el('span', { class: 'author-name' }, profile.name), badge(zaps, cachedZapSats(pubkey))),
           typeof data.nip05 === 'string' && data.nip05 ? el('div', { class: 'note-time' }, data.nip05) : null),
         el('div', { class: 'profile-actions' }, canSign() && !isOwn(pubkey) ? messageButton(pubkey) : null, followButton(pubkey))),
-      typeof data.about === 'string' && data.about ? renderContent(data.about, 'note-content profile-about') : null,
+      typeof data.about === 'string' && data.about ? renderContent(data.about, 'note-content profile-about', { quotes: false }) : null,
       el('dl', { class: 'profile-meta' },
         website ? [el('dt', {}, 'Website'), el('dd', {}, el('a', { href: website, target: '_blank', rel: 'noopener noreferrer' }, website))] : null,
         profile.lud16 ? [el('dt', {}, 'Lightning'), el('dd', {}, profile.lud16)] : null,
         followsCount !== null ? [el('dt', {}, 'Follows'), el('dd', {}, String(followsCount))] : null,
+        followersCount !== null ? [
+          el('dt', {}, 'Followers (approx.)'),
+          el('dd', { class: 'profile-followers-value' },
+            String(followersCount),
+            el('span', { class: 'follower-help' },
+              el('button', {
+                type: 'button',
+                class: 'follower-help-button',
+                'aria-label': 'About follower count accuracy',
+                'aria-describedby': 'follower-count-accuracy',
+                'aria-expanded': 'false',
+                onclick: event => {
+                  event.currentTarget.setAttribute('aria-expanded', String(event.currentTarget.getAttribute('aria-expanded') !== 'true'));
+                }
+              }, '?'),
+              el('span', { id: 'follower-count-accuracy', class: 'follower-help-popup', role: 'tooltip' },
+                'This is an estimate from contact lists found on the relays ZapSurf queried. Relay coverage is incomplete, and older lists may include people who have since unfollowed.')))
+        ] : null,
         el('dt', {}, 'Public key'),
         el('dd', { class: 'npub' },
           el('span', {}, `${npub.slice(0, 20)}…${npub.slice(-6)}`),
@@ -334,6 +372,11 @@ async function showProfile(pubkey, { updateHistory = true } = {}) {
     ].filter(Boolean));
   };
   render();
+  fetchFollowerCount(pubkey).then(count => {
+    if (token !== profileToken || count === null) return;
+    followersCount = count;
+    render();
+  }).catch(() => {});
 
   const [, counts, contactList] = await Promise.all([
     ensureProfile(pubkey),
@@ -341,8 +384,9 @@ async function showProfile(pubkey, { updateHistory = true } = {}) {
     fetchContactList(pubkey).catch(() => null)
   ]);
   if (token !== profileToken) return;
-  const zaps = counts.get(pubkey) || 0;
-  render(zaps, contactList ? contactList.tags.filter(t => t[0] === 'p').length : null);
+  zaps = counts.get(pubkey) || 0;
+  followsCount = contactList ? contactList.tags.filter(t => t[0] === 'p').length : null;
+  render();
 
   const renderNotes = notes => {
     if (token !== profileToken) return;
@@ -383,7 +427,7 @@ function activityPost(note, label = '') {
   return el('div', { class: 'activity-post' },
     label ? el('p', { class: 'activity-context' }, label) : null,
     activityAccount(note.pubkey),
-    renderContent(note.content, 'note-content activity-content'),
+    renderContent(note.content, 'note-content activity-content', { event: note }),
     el('div', { class: 'profile-note-footer' },
       timeEl(note.created_at),
       note.kind === 1
@@ -409,9 +453,9 @@ function activityItem(item, targets) {
   return el('article', { class: `activity-item activity-${item.type}`, 'data-activity-id': item.id },
     el('header', { class: 'activity-heading' }, el('strong', {}, label), timeEl(item.created_at)),
     item.type === 'follow' || (item.type === 'zap' && !item.targetId) ? activityAccount(item.account) : null,
-    item.type === 'zap' && item.zap.comment ? renderContent(item.zap.comment, 'note-content activity-comment') : null,
+    item.type === 'zap' && item.zap.comment ? renderContent(item.zap.comment, 'note-content activity-comment', { quotes: false }) : null,
     item.type === 'reply' ? el('div', { class: 'activity-response' },
-      renderContent(item.event.content, 'note-content activity-content'),
+      renderContent(item.event.content, 'note-content activity-content', { event: item.event }),
       viewLink(notePath(item.event.id, nip19), () => showNote({ note: item.event, zaps: cachedZapCount(item.event.pubkey) }), 'Open reply')) : null,
     target ? activityPost(target, item.type === 'reply' ? 'In reply to' : '') : missing);
 }
@@ -558,7 +602,7 @@ function replyItem(reply, zaps, nested = false) {
     profileLink(reply.pubkey, avatar(reply.pubkey, 'small')),
     el('div', { class: 'reply-body' },
       el('div', { class: 'reply-meta' }, profileLink(reply.pubkey, authorLine(reply.pubkey, zaps)), timeEl(reply.created_at)),
-      renderContent(reply.content),
+      renderContent(reply.content, 'note-content', { event: reply }),
       actionBar(reply)));
 }
 
@@ -613,7 +657,7 @@ function renderZap(zap) {
         profileLink(zap.sender, authorLine(zap.sender, 0)),
         el('span', { class: 'zap-amount' }, `⚡ ${formatSats(zap.sats)} sats`),
         timeEl(zap.createdAt)),
-      zap.comment.trim() ? renderContent(zap.comment, 'note-content zap-comment') : null));
+      zap.comment.trim() ? renderContent(zap.comment, 'note-content zap-comment', { quotes: false }) : null));
 }
 
 async function loadNoteZaps(note, container, quiet = false) {
@@ -649,6 +693,7 @@ function createInteractionDropdown() {
       }))
       : el('p', { class: 'interaction-empty' }, 'No one yet.'));
   return {
+    element: dropdown,
     render(people) {
       panel.replaceChildren(
         group('Reposted by', people.reposts),
@@ -723,7 +768,7 @@ function showNote(item, button = null, { updateHistory = true } = {}) {
       profileLink(note.pubkey, avatar(note.pubkey, 'large')),
       el('div', { class: 'note-meta' }, profileLink(note.pubkey, authorLine(note.pubkey, zaps)), timeEl(note.created_at)),
       el('div', { class: 'profile-actions' }, followButton(note.pubkey))),
-    renderContent(note.content, 'note-content', { linkPreviews: true }),
+    renderContent(note.content, 'note-content', { linkPreviews: true, event: note }),
     el('div', { class: 'note-toolbar' },
       actionBar(note, { onReply: focusReply }),
       interactionDropdown.element),

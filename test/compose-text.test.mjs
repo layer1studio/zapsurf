@@ -23,3 +23,20 @@ test('does not serialize stale mention spans', () => {
   const content = serializeMentions('Hi @Adam!', [mention], () => 'npub1encoded');
   assert.equal(content, 'Hi @Adam!');
 });
+
+test('preserves the space after a selected mention before and after typing', () => {
+  const initial = 'Hi @Ada ';
+  const next = `${initial}hello`;
+  const rebased = rebaseMentions(initial, next, [mention]);
+  assert.deepEqual(rebased, [mention]);
+  assert.equal(serializeMentions(initial, [mention], () => 'npub1encoded'), 'Hi nostr:npub1encoded ');
+  assert.equal(serializeMentions(next, rebased, () => 'npub1encoded'), 'Hi nostr:npub1encoded hello');
+});
+
+test('preserves separators between multiple selected mentions', () => {
+  const second = { start: 8, end: 12, text: '@Bob', pubkey: 'b'.repeat(64) };
+  assert.equal(
+    serializeMentions('Hi @Ada @Bob hello', [mention, second], pubkey => `npub-for-${pubkey[0]}`),
+    'Hi nostr:npub-for-a nostr:npub-for-b hello'
+  );
+});

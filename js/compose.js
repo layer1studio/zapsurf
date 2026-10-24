@@ -3,7 +3,9 @@ import { postNote } from './publish.js';
 import { renderContent, quotePreview } from './render.js';
 import { ensureProfile, parseProfile, profiles } from './state.js';
 import { ensureProfiles, getFollows } from './notes.js';
-import { getSession } from './signer.js';
+import { getSession, canSign } from './signer.js';
+import { IMAGE_TYPES, validateImage } from './blossom.mjs';
+import { resolveBlossomServer, uploadBlossomImage } from './blossom.js';
 import { rebaseMentions, serializeMentions } from './compose-text.mjs';
 import { el } from './util.js';
 import { toast, setBusy } from './dialogs.js';
@@ -182,12 +184,106 @@ export function createEmojiPicker(input, insertEmoji) {
 function createEditorTools(input) {
   const state = { mentions: [], lastValue: input.value, queryId: 0, suggestionIndex: 0, nip05Timer: null };
   const emojiTools = createEmojiPicker(input, (emoji, start, end) => applyEdit(start, end, emoji));
+  const uploadButton = el('button', { type: 'button', class: 'icon-button image-upload', title: 'Upload images', 'aria-label': 'Upload images' }, '\u{1F5BC}');
+  const fileInput = el('input', { type: 'file', accept: IMAGE_TYPES.join(','), multiple: true, hidden: true, 'aria-label': 'Select images' });
+  const uploadStatus = el('span', { class: 'upload-status', role: 'status' });
+  const uploadCancel = el('button', { type: 'button', class: 'icon-button', title: 'Cancel upload', 'aria-label': 'Cancel upload', hidden: true }, '\u2715');
+  const toolButtons = el('div', { class: 'compose-tool-buttons' }, emojiTools.toolbar.firstElementChild, uploadButton, fileInput);
+  emojiTools.toolbar.prepend(toolButtons);
+  const uploadRow = el('div', { class: 'upload-row' }, uploadStatus, uploadCancel);
+  emojiTools.toolbar.append(uploadRow);
+  let activeUpload = null;
+  let cancelUpload = () => {};
   const suggestions = el('div', { class: 'mention-suggestions', role: 'listbox', 'aria-label': 'People suggestions', hidden: true });
   const preview = el('section', { class: 'draft-preview', hidden: true },
     el('h3', {}, 'Preview'),
     el('div', { class: 'draft-preview-content' }));
   input.after(emojiTools.toolbar, suggestions, preview);
   input.setAttribute('aria-autocomplete', 'list');
+
+  uploadButton.addEventListener('click', () => {
+    if (!canSign()) {
+      toast('Log in with a signer to upload images.');
+      return;
+    }
+    fileInput.click();
+  });
+  uploadCancel.addEventListener('click', () => cancelUpload());
+  fileInput.addEventListener('change', async () => {
+    const files = [...fileInput.files];
+    fileInput.value = '';
+    if (!files.length || activeUpload) return;
+    if (!canSign()) return;
+    const pubkey = getSession().pubkey;
+    const controller = new AbortController();
+    activeUpload = controller;
+    let position = input.selectionEnd ?? input.value.length;
+    const readOnly = input.readOnly;
+    const controls = [...input.closest('form').querySelectorAll('button, input')]
+      .filter(control => control !== uploadCancel && !control.dataset.keepEnabled);
+    const disabled = controls.map(control => control.disabled);
+    controls.forEach(control => { control.disabled = true; });
+    input.readOnly = true;
+    input.setAttribute('aria-busy', 'true');
+    uploadCancel.hidden = false;
+    uploadStatus.replaceChildren('Checking image server...');
+    const failures = [];
+    const uninserted = [];
+    let uploaded = 0;
+    const showUploadedLinks = () => {
+      for (const url of uninserted) uploadStatus.append(' Draft is full. Uploaded image: ', el('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, url));
+    };
+    const release = () => {
+      if (activeUpload !== controller) return;
+      activeUpload = null;
+      controls.forEach((control, index) => { control.disabled = disabled[index]; });
+      input.readOnly = readOnly;
+      input.removeAttribute('aria-busy');
+      uploadCancel.hidden = true;
+    };
+    cancelUpload = () => {
+      if (activeUpload !== controller) return;
+      controller.abort();
+      uploadStatus.textContent = 'Upload cancelled. Uploaded images remain in the draft.';
+      showUploadedLinks();
+      release();
+    };
+    document.addEventListener('zs:session', cancelUpload, { signal: controller.signal });
+    const observer = new MutationObserver(() => { if (!input.isConnected) cancelUpload(); });
+    observer.observe(document.body, { childList: true, subtree: true });
+    controller.signal.addEventListener('abort', () => observer.disconnect(), { once: true });
+    try {
+      for (const file of files) validateImage(file);
+      const server = await resolveBlossomServer(pubkey);
+      controller.signal.throwIfAborted();
+      for (const [index, file] of files.entries()) {
+        uploadStatus.textContent = `Uploading ${index + 1}/${files.length} to ${new URL(server).host}...`;
+        try {
+          const image = await uploadBlossomImage(file, server, pubkey, controller.signal);
+          controller.signal.throwIfAborted();
+          const before = position && input.value[position - 1] !== '\n' ? '\n' : '';
+          const insertion = `${before}${image.url}\n`;
+          if (applyEdit(position, position, insertion)) position += insertion.length;
+          else uninserted.push(image.url);
+          uploaded++;
+        } catch (error) {
+          if (controller.signal.aborted || error.name === 'SigningError') throw error;
+          failures.push(`${file.name}: ${error.message}`);
+        }
+      }
+      uploadStatus.replaceChildren(`${uploaded}/${files.length} images uploaded.${failures.length ? ` ${failures.join(' ')}` : ''}`);
+      showUploadedLinks();
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        uploadStatus.textContent = error.message || 'Upload failed.';
+        showUploadedLinks();
+      }
+    } finally {
+      release();
+      controller.abort();
+      observer.disconnect();
+    }
+  });
 
   const refreshPreview = () => {
     const content = editorContent(input, state.mentions);
@@ -204,7 +300,7 @@ function createEditorTools(input) {
     state.mentions = rebaseMentions(previous, next, state.mentions);
     input.value = next;
     state.lastValue = next;
-    if (addedMention) state.mentions.push({ ...addedMention, start, end: start + replacement.length });
+    if (addedMention) state.mentions.push({ ...addedMention, start, end: start + addedMention.text.length });
     input.focus();
     input.setSelectionRange(cursor, cursor);
     refreshPreview();
@@ -235,7 +331,7 @@ function createEditorTools(input) {
   }
 
   function selectProfile(pubkey, queryRange, fallbackName = '') {
-    const name = usernameFor(pubkey) || fallbackName || parseProfile(pubkey).name;
+    const name = fallbackName || usernameFor(pubkey) || parseProfile(pubkey).name;
     const label = `@${name}`;
     applyEdit(queryRange.start, queryRange.end, `${label} `, { text: label, pubkey });
     suggestions.hidden = true;
@@ -339,7 +435,11 @@ function createEditorTools(input) {
 
   return {
     serialize: () => editorContent(input, state.mentions),
+    get uploading() { return Boolean(activeUpload); },
+    cancelUpload: () => cancelUpload(),
     reset: () => {
+      cancelUpload();
+      uploadStatus.replaceChildren();
       state.mentions = [];
       state.lastValue = '';
       state.queryId++;
@@ -369,6 +469,7 @@ export function openComposer({ replyTo = null, quote = null } = {}) {
 
 form.addEventListener('submit', async event => {
   event.preventDefault();
+  if (composerEditor.uploading) return;
   setBusy(dialog, true);
   statusEl.textContent = 'Publishing…';
   let relayResult = { accepted: 0, settled: 0, total: 0 };
@@ -396,6 +497,7 @@ textarea.addEventListener('keydown', event => {
 });
 
 document.getElementById('compose-close').addEventListener('click', () => dialog.close());
+dialog.addEventListener('close', () => { if (!dialog.open) composerEditor.cancelUpload(); });
 
 export function inlineReplyBox(note) {
   const input = el('textarea', { class: 'reply-input', rows: '3', maxlength: String(MAX_LENGTH), placeholder: `Reply to ${parseProfile(note.pubkey).name}…`, 'aria-label': 'Reply' });
@@ -409,6 +511,7 @@ export function inlineReplyBox(note) {
   });
   box.addEventListener('submit', async event => {
     event.preventDefault();
+    if (editor.uploading) return;
     setBusy(box, true);
     status.textContent = 'Publishing…';
     let relayResult = { accepted: 0, settled: 0, total: 0 };

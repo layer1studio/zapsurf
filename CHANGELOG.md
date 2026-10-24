@@ -7,6 +7,10 @@
 - Read existing legacy NIP-04 conversations and offer an explicit per-conversation legacy-send switch with a metadata-privacy warning; keep NIP-17 as the default and never downgrade automatically.
 - Check recipient inbox readiness before enabling Send, show actionable disabled-button reasons, and place a teal Messages button beside New note with matching dimensions.
 - Add focused DM protocol, relay routing, retry, signer-denial, history, recipient-readiness, and legacy opt-in regression tests.
+- Add multi-image Blossom uploads to note and reply editors, discover advertised upload servers, and support an account-specific fallback server in Settings with validated upload descriptors and cancellation.
+- Render quoted notes inline with bounded nesting, media, link previews, and unavailable-note fallbacks.
+- Show approximate profile follower counts with cached relay queries and an explanation of relay-coverage limits; load notification author profiles before rendering activity.
+- Preserve spaces after selected mentions and refine emoji picker layout, with regression tests for uploads, quote references, follower counts, and composer text.
 
 ## 0.6.0 - 2026-10-24
 

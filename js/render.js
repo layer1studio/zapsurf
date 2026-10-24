@@ -2,6 +2,8 @@ import { nip19 } from './deps.js';
 import { ensureProfile, parseProfile, settings } from './state.js';
 import { cachedZapSats } from './zapcount.js';
 import { el, safeHttpUrl, formatSats, emit } from './util.js';
+import { loadNoteEvent } from './notes.js';
+import { CONTENT_TOKEN_RE, quoteReference, taggedQuotes, createQuoteContext, enterQuote } from './quote-references.mjs';
 
 export function avatar(pubkey, size = '') {
   const profile = parseProfile(pubkey);
@@ -32,13 +34,13 @@ export function timeEl(createdAt) {
   return el('time', { class: 'note-time', datetime: time.toISOString() }, time.toLocaleString());
 }
 
-const TOKEN_RE = /(https?:\/\/[^\s<>"']+)|nostr:((?:npub|nprofile|note|nevent|naddr)1[02-9ac-hj-np-z]+)|(?<![a-z0-9])((?:npub|nprofile)1[02-9ac-hj-np-z]+)(?![a-z0-9])/gi;
 const IMAGE_RE = /\.(jpe?g|png|gif|webp|avif)$/i;
 const VIDEO_RE = /\.(mp4|webm|mov|m4v)$/i;
 const profileLookups = new Map();
 const linkPreviewCache = new Map();
 const LINK_PREVIEW_TTL_MS = 10 * 60 * 1000;
 const MAX_LINK_PREVIEWS = 4;
+const quoteLookups = new Map();
 
 function loadMentionProfile(pubkey) {
   if (!profileLookups.has(pubkey)) {
@@ -48,11 +50,11 @@ function loadMentionProfile(pubkey) {
   return profileLookups.get(pubkey);
 }
 
-export function renderContent(text, className = 'note-content', { linkPreviews = false } = {}) {
+export function renderContent(text, className = 'note-content', { linkPreviews = false, event = null, quotes = true, quoteContext = createQuoteContext(event?.id) } = {}) {
   const container = el('div', { class: className });
-  let previewCount = 0;
+  const seenQuotes = new Set();
   let last = 0;
-  for (const match of text.matchAll(TOKEN_RE)) {
+  for (const match of text.matchAll(CONTENT_TOKEN_RE)) {
     container.append(text.slice(last, match.index));
     last = match.index + match[0].length;
     if (match[1]) {
@@ -67,17 +69,49 @@ export function renderContent(text, className = 'note-content', { linkPreviews =
         container.append(el('video', { src: href, controls: true, preload: 'metadata', playsinline: true, referrerpolicy: 'no-referrer' }));
       } else {
         container.append(el('a', { href, target: '_blank', rel: 'noopener noreferrer' }, trimmed));
-        if (linkPreviews && previewCount < MAX_LINK_PREVIEWS && isPreviewableLink(href)) {
+        if (linkPreviews && quoteContext.budget.previews < MAX_LINK_PREVIEWS && isPreviewableLink(href)) {
           container.append(createLinkPreview(href));
-          previewCount++;
+          quoteContext.budget.previews++;
         }
       }
     } else {
-      container.append(renderNostrRef(match[2] || match[3]));
+      const entity = match[2] || match[3];
+      const reference = quotes ? quoteReference(entity, nip19.decode) : null;
+      if (reference && !seenQuotes.has(reference.id)) {
+        seenQuotes.add(reference.id);
+        container.append(renderQuoteReference(reference, entity, quoteContext));
+      } else {
+        container.append(renderNostrRef(entity));
+      }
     }
   }
   container.append(text.slice(last));
+  if (quotes) {
+    for (const reference of taggedQuotes(event?.tags)) {
+      if (seenQuotes.has(reference.id)) continue;
+      seenQuotes.add(reference.id);
+      container.append(renderQuoteReference(reference, nip19.noteEncode(reference.id), quoteContext));
+    }
+  }
   return container;
+}
+
+function renderQuoteReference(reference, entity, context) {
+  const fallback = el('a', { href: `https://njump.me/${entity}`, target: '_blank', rel: 'noopener noreferrer' }, `${entity.slice(0, 14)}\u2026`);
+  const next = enterQuote(context, reference.id);
+  if (!next) return fallback;
+  const placeholder = el('div', { class: 'quote-loading', 'aria-busy': 'true' }, fallback);
+  let mounted = false;
+  queueMicrotask(() => { mounted = placeholder.isConnected; });
+  if (!quoteLookups.has(reference.id)) {
+    const lookup = loadNoteEvent(reference.id, reference.relays).finally(() => quoteLookups.delete(reference.id));
+    quoteLookups.set(reference.id, lookup);
+  }
+  quoteLookups.get(reference.id).then(note => {
+    if (!note || (mounted && !placeholder.isConnected)) return;
+    placeholder.replaceChildren(quotePreview(note, next));
+  }).catch(() => {}).finally(() => placeholder.removeAttribute('aria-busy'));
+  return placeholder;
 }
 
 function isPreviewableLink(href) {
@@ -167,8 +201,23 @@ function renderNostrRef(entity) {
   return el('a', { href: `https://njump.me/${entity}`, target: '_blank', rel: 'noopener noreferrer' }, label);
 }
 
-export function quotePreview(note) {
-  return el('div', { class: 'quote-preview' },
-    el('div', { class: 'author-line' }, avatar(note.pubkey, 'small'), el('span', { class: 'author-name' }, parseProfile(note.pubkey).name)),
-    el('div', { class: 'note-preview' }, note.content.slice(0, 280)));
+export function quotePreview(note, context = enterQuote(createQuoteContext(), note.id)) {
+  const author = el('button', {
+    type: 'button', class: 'link-button quote-author',
+    onclick: event => { event.stopPropagation(); emit('zs:open-profile', note.pubkey); }
+  }, avatar(note.pubkey, 'small'), el('span', { class: 'author-name' }, parseProfile(note.pubkey).name));
+  loadMentionProfile(note.pubkey).then(profile => { author.lastElementChild.textContent = profile.name; }).catch(() => {});
+  const open = el('a', {
+    href: `/${nip19.noteEncode(note.id)}`, class: 'quote-open',
+    onclick: event => {
+      event.stopPropagation();
+      if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      emit('zs:open-note', note);
+    }
+  }, 'Open note');
+  return el('section', { class: `quote-preview${context.depth > 1 ? ' nested-quote' : ''}`, onclick: event => event.stopPropagation() },
+    el('header', { class: 'quote-header' }, author, timeEl(note.created_at)),
+    renderContent(note.content, 'note-content quote-content', { event: note, linkPreviews: true, quoteContext: context }),
+    open);
 }
