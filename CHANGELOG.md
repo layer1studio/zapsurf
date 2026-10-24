@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0 - 2026-10-24
+
+- Add an All Activity link to profiles, opening a shareable timeline of original posts, replies, likes and reactions, reposts, verified sent zaps, and new follows.
+- Show target-post details, reply-parent context, zap amounts and comments, and followed profiles, with unavailable-target fallbacks and paginated older activity.
+- Infer new follows from available historical contact lists without inventing follow dates when older snapshots are missing; handle partial relay failures with retry controls.
+- Add profile activity routes and Vercel deep-link rewrites, plus focused tests for activity classification, follow history, pagination, routing, and zap target validation.
+
 ## 0.5.7 - 2026-10-23
 
 - Add an in-app Activity inbox for replies, mentions, likes, reposts, and verified incoming zaps, with 30-day activity history, per-account unread state, and foreground polling. Include recent activity on older authored notes.

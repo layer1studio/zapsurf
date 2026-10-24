@@ -1,7 +1,7 @@
 import { nip57, verifyEvent } from './deps.js';
 import { pool, DEFAULT_RELAYS, ensureProfile } from './state.js';
 import { getLnurlPay } from './lnurl.js';
-import { validateZapReceipt } from './zap-validation.mjs';
+import { validateZapReceipt, validateZapActivityReceipt } from './zap-validation.mjs';
 import { chunk, now } from './util.js';
 
 const ZAP_WINDOW_SECS = 14 * 24 * 60 * 60;
@@ -105,6 +105,14 @@ export async function loadNoteZaps(note) {
   const uniqueReceipts = [...new Map(receipts.map(receipt => [receipt.id, receipt])).values()];
   const zaps = await Promise.all(uniqueReceipts.map(receipt => validateZapForNote(receipt, note)));
   return zaps.filter(Boolean).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export function validateSentZap(receipt, sender) {
+  return validateZapActivityReceipt(receipt, sender, {
+    verifyEvent,
+    getProviderPubkey: providerPubkeyFor,
+    getBolt11AmountMsats: bolt11AmountMsats
+  });
 }
 
 export async function validateZapForNote(receipt, note) {

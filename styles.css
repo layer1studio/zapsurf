@@ -653,6 +653,26 @@ a:focus-visible {
 .profile-note-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
 .profile-note-footer .item-stats { flex: 1 1 100%; margin-top: 0; }
 
+.profile-navigation { margin-bottom: 24px; }
+.activity-title { margin: 0 0 12px; font-size: 24px; letter-spacing: 0; }
+.activity-identity { margin-bottom: 24px; }
+.activity-item { padding: 22px 0; border-top: 1px solid var(--border); min-width: 0; }
+.activity-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 14px; }
+.activity-heading strong { color: var(--accent); font-size: 14px; overflow-wrap: anywhere; }
+.activity-heading .note-time { margin-left: auto; }
+.activity-account { display: flex; align-items: center; gap: 10px; min-width: 0; margin-bottom: 10px; }
+.activity-account .profile-link { min-width: 0; overflow-wrap: anywhere; text-align: left; }
+.activity-account .profile-link:first-child { flex: none; }
+.activity-account .author-line { flex-wrap: wrap; }
+.activity-content { margin-bottom: 12px; }
+.activity-response { margin-bottom: 18px; }
+.activity-response + .activity-post { border-left: 2px solid var(--border); padding-left: 16px; }
+.activity-context { color: var(--muted); margin: 0 0 10px; font-size: 13px; }
+.activity-comment { margin-bottom: 16px; }
+.activity-reference { display: block; margin-top: 8px; color: var(--muted); font: 12px monospace; overflow-wrap: anywhere; }
+.activity-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 0 24px; }
+.activity-page .note-content img, .activity-page .note-content video { border-radius: 8px; }
+
 .load-more {
   padding: 16px;
   color: var(--muted);

@@ -28,7 +28,9 @@ Set the minimum to 0 in Settings to show everyone. In the Home feed, you can als
 
 - Browse Explore and Trending feeds, or a personalized Home feed when signed in; sort by recency, zaps, likes, replies, reposts, and engagement.
 - Read note threads and profiles, follow accounts, and view recent profile notes.
+- Open **All Activity** from a profile for a newest-first timeline of posts, replies, likes/reactions, reposts, verified sent zaps, and new follows, with target-post details and older activity available through Load more. New follows require historical contact-list snapshots; many relays retain only the latest list, so follow history may be unavailable or incomplete. Activity history also depends on public relay retention.
 - Open shareable profiles at `/<npub>` and notes at `/<note>`; the NIP-19 prefix identifies the view. Direct links require the app-shell rewrite configured for Vercel.
+- Share activity pages at `/<npub>/activity` or `/<nprofile>/activity`. For local deep-link refresh support, append `--proxy 'http://127.0.0.1:8080?'` to the server command above.
 - Sign in with a NIP-07 browser extension, a NIP-46 remote signer, an encrypted private key, or in read-only mode.
 - Write notes and replies, and like, repost, or quote notes.
 - Send Lightning zaps with WebLN or a Nostr Wallet Connect wallet, with configurable one-tap amounts.

@@ -1,5 +1,7 @@
 {
   "rewrites": [
+    { "source": "/:entity(npub1[^/]+)/activity", "destination": "/index.html" },
+    { "source": "/:entity(nprofile1[^/]+)/activity", "destination": "/index.html" },
     { "source": "/:entity(npub1[^/]+)", "destination": "/index.html" },
     { "source": "/:entity(nprofile1[^/]+)", "destination": "/index.html" },
     { "source": "/:entity(note1[^/]+)", "destination": "/index.html" },

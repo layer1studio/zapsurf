@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateZapReceipt } from '../js/zap-validation.mjs';
+import { validateZapReceipt, validateZapActivityReceipt } from '../js/zap-validation.mjs';
 
 const sender = '1'.repeat(64);
 const recipient = '2'.repeat(64);
@@ -74,4 +74,21 @@ test('rejects inconsistent sender or recipient tags and self-zaps', async () => 
   const selfRequest = { ...request, tags: [['p', sender], ['amount', '21000']] };
   const selfReceipt = receiptWith({ tags: receiptWith().tags.map(tag => tag[0] === 'p' ? ['p', sender] : tag[0] === 'description' ? ['description', JSON.stringify(selfRequest)] : tag) });
   assert.equal(await validate(selfReceipt), null);
+});
+
+test('activity zaps accept profile-only receipts and require matching signed post references', async () => {
+  const dependencies = {
+    verifyEvent: event => event.valid,
+    getProviderPubkey: async () => provider,
+    getBolt11AmountMsats: async () => 21000
+  };
+  assert.equal((await validateZapActivityReceipt(receiptWith(), sender, dependencies)).targetId, null);
+  const target = 'a'.repeat(64);
+  const postRequest = { ...request, tags: [...request.tags, ['e', target]] };
+  const tags = receiptWith().tags.map(tag => tag[0] === 'description' ? ['description', JSON.stringify(postRequest)] : tag);
+  const receipt = receiptWith({ tags: [...tags, ['e', target]] });
+  assert.equal((await validateZapActivityReceipt(receipt, sender, dependencies)).targetId, target);
+  assert.equal(await validateZapActivityReceipt(receiptWith({ tags }), sender, dependencies), null);
+  assert.equal(await validateZapActivityReceipt(receiptWith({ tags: [...tags, ['e', 'b'.repeat(64)]] }), sender, dependencies), null);
+  assert.equal(await validateZapActivityReceipt(receiptWith({ tags: [...receipt.tags, ['e', target]] }), sender, dependencies), null);
 });

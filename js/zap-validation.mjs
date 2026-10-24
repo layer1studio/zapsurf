@@ -68,3 +68,16 @@ export async function validateZapReceipt(receipt, expectedSender, {
     comment: typeof request.content === 'string' ? request.content : ''
   };
 }
+
+export async function validateZapActivityReceipt(receipt, expectedSender, dependencies) {
+  const zap = await validateZapReceipt(receipt, expectedSender, dependencies);
+  if (!zap) return null;
+  const request = JSON.parse(singleTag(receipt, 'description'));
+  const receiptTargets = tagValues(receipt, 'e');
+  const requestTargets = tagValues(request, 'e');
+  if (receiptTargets.length > 1 || requestTargets.length > 1 || receiptTargets.length !== requestTargets.length) return null;
+  const targetId = receiptTargets[0] || null;
+  if (targetId && (!/^[0-9a-f]{64}$/i.test(targetId) || targetId !== requestTargets[0])) return null;
+  if (receiptTargets.length && !targetId) return null;
+  return { ...zap, targetId };
+}

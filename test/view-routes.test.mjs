@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { notePath, parseViewPath, profilePath } from '../js/view-routes.mjs';
+import { notePath, parseViewPath, profilePath, profileActivityPath } from '../js/view-routes.mjs';
 
 const pubkey = 'a'.repeat(64);
 const noteId = 'b'.repeat(64);
@@ -39,4 +39,14 @@ test('rejects malformed paths, incompatible entities, and non-note events', () =
   assert.deepEqual(parseViewPath('/bad', nip19), { type: 'invalid' });
   assert.deepEqual(parseViewPath('/profile/npub-user', nip19), { type: 'invalid' });
   assert.deepEqual(parseViewPath('/nevent-other-kind', nip19), { type: 'invalid' });
+});
+
+test('activity routes accept profiles only and generate bookmarkable paths', () => {
+  assert.equal(profileActivityPath(pubkey, nip19), '/npub-user/activity');
+  for (const path of ['/npub-user/activity', '/nprofile-user/activity', '/npub-user/activity/']) {
+    assert.deepEqual(parseViewPath(path, nip19), { type: 'profile-activity', pubkey });
+  }
+  for (const path of ['/note-event/activity', '/nevent-event/activity', '/bad/activity', '/npub-user/other', '/npub-user/activity/more']) {
+    assert.deepEqual(parseViewPath(path, nip19), { type: 'invalid' });
+  }
 });

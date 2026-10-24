@@ -13,10 +13,11 @@ import { openLoginDialog } from './login.js';
 import { openSettings } from './settings.js';
 import { el, isDirectReplyTo, isReply, now, store, formatSats, safeHttpUrl } from './util.js';
 import { buildReplyTree } from './reply-tree.mjs';
-import { notePath, parseViewPath, profilePath } from './view-routes.mjs';
+import { notePath, parseViewPath, profilePath, profileActivityPath } from './view-routes.mjs';
 import { selectNewNotes } from './live-updates.mjs';
 import { fetchNotificationActivity } from './notification-service.js';
 import { mergeNotifications, notificationSince } from './notifications.mjs';
+import { createUserActivityLoader } from './user-activity-service.js';
 
 const SORT_KEY = 'zs-sort';
 const stat = key => item => statsFor(item.note.id)[key];
@@ -125,6 +126,17 @@ function profileLink(pubkey, ...children) {
   return el('button', {
     type: 'button', class: 'profile-link', title: 'View profile',
     onclick: event => { event.stopPropagation(); showProfile(pubkey); }
+  }, ...children);
+}
+
+function viewLink(path, open, ...children) {
+  return el('a', {
+    href: path, class: 'link-button',
+    onclick: event => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      open();
+    }
   }, ...children);
 }
 
@@ -243,6 +255,8 @@ async function showProfile(pubkey, { updateHistory = true } = {}) {
             type: 'button', class: 'link-button',
             onclick: () => navigator.clipboard.writeText(npub).then(() => toast('npub copied')).catch(() => toast('Could not copy', 'error'))
           }, 'Copy'))),
+      el('nav', { class: 'profile-navigation', 'aria-label': 'Profile' },
+        viewLink(profileActivityPath(pubkey, nip19), () => showProfileActivity(pubkey), 'All Activity')),
       notesEl
     ].filter(Boolean));
   };
@@ -273,6 +287,124 @@ async function showProfile(pubkey, { updateHistory = true } = {}) {
 }
 
 document.addEventListener('zs:open-profile', ({ detail: pubkey }) => showProfile(pubkey));
+
+function activityAccount(pubkey) {
+  return el('div', { class: 'activity-account' },
+    profileLink(pubkey, avatar(pubkey, 'small')),
+    profileLink(pubkey, authorLine(pubkey, cachedZapCount(pubkey))));
+}
+
+function activityPost(note, label = '') {
+  return el('div', { class: 'activity-post' },
+    label ? el('p', { class: 'activity-context' }, label) : null,
+    activityAccount(note.pubkey),
+    renderContent(note.content, 'note-content activity-content'),
+    el('div', { class: 'profile-note-footer' },
+      timeEl(note.created_at),
+      note.kind === 1
+        ? viewLink(notePath(note.id, nip19), () => showNote({ note, zaps: cachedZapCount(note.pubkey) }), 'Open note')
+        : el('a', {
+          href: `https://njump.me/${nip19.neventEncode({ id: note.id, kind: note.kind, author: note.pubkey })}`,
+          target: '_blank', rel: 'noopener noreferrer'
+        }, 'View event')));
+}
+
+function activityItem(item, targets) {
+  const labels = { post: 'Posted', reply: 'Replied', repost: 'Reposted', follow: 'Started following' };
+  let label = labels[item.type];
+  if (item.type === 'like') label = item.reaction === '+' ? 'Liked' : item.reaction === '-' ? 'Disliked' : `Reacted ${item.reaction}`;
+  if (item.type === 'zap') label = `Zapped ${formatSats(item.zap.sats)} sats`;
+  const target = targets.get(item.targetId);
+  const missing = item.targetId && !target ? el('div', { class: 'activity-missing' },
+    el('p', { class: 'replies-status' }, 'Target post unavailable.'),
+    item.targetKind === 1
+      ? viewLink(notePath(item.targetId, nip19), () => restoreActivityTarget(item.targetId), 'Open note')
+      : el('a', { href: `https://njump.me/${nip19.neventEncode({ id: item.targetId })}`, target: '_blank', rel: 'noopener noreferrer' }, 'View event'),
+    el('span', { class: 'activity-reference' }, item.targetId)) : null;
+  return el('article', { class: `activity-item activity-${item.type}`, 'data-activity-id': item.id },
+    el('header', { class: 'activity-heading' }, el('strong', {}, label), timeEl(item.created_at)),
+    item.type === 'follow' || (item.type === 'zap' && !item.targetId) ? activityAccount(item.account) : null,
+    item.type === 'zap' && item.zap.comment ? renderContent(item.zap.comment, 'note-content activity-comment') : null,
+    item.type === 'reply' ? el('div', { class: 'activity-response' },
+      renderContent(item.event.content, 'note-content activity-content'),
+      viewLink(notePath(item.event.id, nip19), () => showNote({ note: item.event, zaps: cachedZapCount(item.event.pubkey) }), 'Open reply')) : null,
+    target ? activityPost(target, item.type === 'reply' ? 'In reply to' : '') : missing);
+}
+
+function restoreActivityTarget(id) {
+  updatePath(notePath(id, nip19));
+  restoreLocation();
+}
+
+async function showProfileActivity(pubkey, { updateHistory = true } = {}) {
+  const activityRoute = ++routeToken;
+  routeNotice = '';
+  if (updateHistory) updatePath(profileActivityPath(pubkey, nip19));
+  const token = ++profileToken;
+  loadToken++;
+  threadToken++;
+  openThread = null;
+  profileOpen = pubkey;
+  shownNoteId = null;
+  updateNoteNavigation();
+  for (const other of listEl.querySelectorAll('.note-item')) other.removeAttribute('aria-current');
+  if (!lastResult) listEl.replaceChildren();
+  setStatus('All Activity');
+
+  const identity = el('div', { class: 'activity-identity' }, activityAccount(pubkey));
+  const rows = el('div', { class: 'activity-list', 'aria-label': 'Activity' });
+  const status = el('p', { class: 'replies-status', role: 'status' });
+  const warnings = el('div', { class: 'activity-warnings' });
+  const controls = el('div', { class: 'activity-controls' });
+  const back = viewLink(profilePath(pubkey, nip19), () => showProfile(pubkey), 'Back to profile');
+  back.classList.add('back-link');
+  mainEl.replaceChildren(el('section', { class: 'note activity-page' },
+    back, el('h1', { class: 'activity-title' }, 'All Activity'), identity, warnings, rows, status, controls));
+  mainEl.parentElement.scrollTop = 0;
+
+  let loader = null;
+  let busy = false;
+  let items = [];
+  const targets = new Map();
+  const current = () => token === profileToken && activityRoute === routeToken;
+  const load = async (retry = false) => {
+    if (busy || !current()) return;
+    busy = true;
+    rows.setAttribute('aria-busy', 'true');
+    status.classList.add('busy');
+    status.textContent = 'Loading activity from relays...';
+    controls.replaceChildren();
+    try {
+      if (retry) loader = null;
+      if (!loader) loader = await createUserActivityLoader(pubkey);
+      if (!current()) return;
+      const page = await loader.next();
+      if (!current()) return;
+      items = page.items;
+      for (const [id, note] of page.targets) targets.set(id, note);
+      identity.replaceChildren(activityAccount(pubkey));
+      rows.replaceChildren(...items.map(item => activityItem(item, targets)));
+      warnings.replaceChildren(
+        ...(page.partial ? [el('p', { class: 'replies-status' }, 'Some relays are unavailable. Showing available activity.')] : []),
+        ...(page.followHistoryLimited ? [el('p', { class: 'replies-status' }, 'New-follow history unavailable: older follow lists were not found.')] : []));
+      status.textContent = page.blocked
+        ? 'A relay response limit was reached. Older activity could not be loaded without skipping events.'
+        : page.exhausted ? items.length ? 'End of available activity.' : 'No activity found on available relays.'
+          : `${items.length} ${items.length === 1 ? 'activity' : 'activities'} loaded.`;
+      if (!page.exhausted && !page.blocked) controls.append(el('button', { type: 'button', class: 'button secondary', onclick: () => load() }, 'Load more'));
+      if (page.partial || page.blocked) controls.append(el('button', { type: 'button', class: 'link-button', onclick: () => load(true) }, 'Retry relays'));
+    } catch (error) {
+      if (!current()) return;
+      status.textContent = `Could not load activity: ${error.message}`;
+      controls.append(el('button', { type: 'button', class: 'button secondary', onclick: () => load(true) }, 'Retry'));
+    } finally {
+      busy = false;
+      rows.removeAttribute('aria-busy');
+      status.classList.remove('busy');
+    }
+  };
+  await load();
+}
 
 // ---------- Note view ----------
 
@@ -1128,6 +1260,10 @@ async function restoreLocation() {
     showProfile(route.pubkey, { updateHistory: false });
     return;
   }
+  if (route.type === 'profile-activity') {
+    showProfileActivity(route.pubkey, { updateHistory: false });
+    return;
+  }
 
   listEl.replaceChildren();
   setStatus('Loading note…', true);
@@ -1160,6 +1296,7 @@ document.addEventListener('zs:session', () => {
   renderFeedOptions(next);
   const route = parseViewPath(location.pathname, nip19);
   if (route.type === 'profile') showProfile(route.pubkey, { updateHistory: false });
+  else if (route.type === 'profile-activity') showProfileActivity(route.pubkey, { updateHistory: false });
   else if (route.type === 'note') restoreLocation();
   else loadFeed(feedSelect.value);
   loadOwnProfile();
