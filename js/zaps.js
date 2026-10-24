@@ -4,6 +4,7 @@ import { pool, DEFAULT_RELAYS, ZAP_PRESETS, ensureProfile, statsFor, actionsFor,
 import { signEvent, getSession } from './signer.js';
 import { getWriteRelays } from './publish.js';
 import { payInvoice, walletLabel } from './wallet.js';
+import { createEmojiPicker } from './compose.js';
 import { el, now, formatSats, emit } from './util.js';
 import { toast, setBusy } from './dialogs.js';
 
@@ -57,6 +58,16 @@ function watchForReceipt(note, invoice, onPaid) {
 const dialog = document.getElementById('zap-dialog');
 const amountInput = document.getElementById('zap-amount');
 const commentInput = document.getElementById('zap-comment');
+const commentEmojiPicker = createEmojiPicker(commentInput, (emoji, start, end) => {
+  const next = `${commentInput.value.slice(0, start)}${emoji}${commentInput.value.slice(end)}`;
+  if (commentInput.maxLength >= 0 && next.length > commentInput.maxLength) return false;
+  commentInput.value = next;
+  const cursor = start + emoji.length;
+  commentInput.focus();
+  commentInput.setSelectionRange(cursor, cursor);
+  commentInput.dispatchEvent(new Event('input', { bubbles: true }));
+});
+commentInput.after(commentEmojiPicker.toolbar);
 const statusEl = document.getElementById('zap-status');
 const invoiceSection = document.getElementById('zap-invoice');
 const presetsEl = document.getElementById('zap-presets');
@@ -130,6 +141,7 @@ export function openZapDialog(note, presetSats = settings.defaultZap || ZAP_PRES
   current = { note };
   amountInput.value = presetSats;
   commentInput.value = '';
+  commentEmojiPicker.close();
   invoiceSection.hidden = true;
   statusEl.textContent = `Wallet: ${walletLabel()}`;
   highlightPreset();

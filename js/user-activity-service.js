@@ -5,8 +5,27 @@ import { ensureProfiles } from './notes.js?v=0.4.0';
 import { validateSentZap } from './zapcount.js';
 import { chunk, now } from './util.js';
 import { classifyUserActivity, createActivityPager, followActivity, mergeActivity } from './user-activity.mjs';
+import { contentCache } from './cache.mjs';
 
 const HEX = /^[0-9a-f]{64}$/i;
+const ACTIVITY_CACHE_MS = 12 * 60 * 60 * 1000;
+const activityCacheKey = pubkey => `user-activity:${pubkey}`;
+
+export function getCachedUserActivity(pubkey) {
+  const cached = contentCache.get(activityCacheKey(pubkey));
+  const items = Array.isArray(cached?.items)
+    ? cached.items.filter(item => typeof item?.id === 'string' && item.event?.id && Number.isSafeInteger(item.created_at))
+    : [];
+  if (!items.length) return null;
+  return {
+    items,
+    targets: new Map(Array.isArray(cached.targets)
+      ? cached.targets.filter(entry => Array.isArray(entry) && typeof entry[0] === 'string'
+        && entry[1]?.id === entry[0] && entry[1].kind === 1)
+      : []),
+    followHistoryLimited: Boolean(cached.followHistoryLimited)
+  };
+}
 
 function verified(event) {
   try { return verifyEvent(event); } catch { return false; }
@@ -39,22 +58,46 @@ function queryRelay(relay, filter) {
   });
 }
 
-export async function createUserActivityLoader(pubkey) {
+export async function createUserActivityLoader(pubkey, onProgress = () => {}) {
   const writeRelays = await getWriteRelays(pubkey);
   const relays = uniqueRelays(writeRelays, DEFAULT_RELAYS);
   const sources = [];
+  const sourceCountByRelay = new Map();
   for (const kind of [1, 6, 7, 16, 9735, 3]) {
     const locations = kind === 3 ? uniqueRelays(relays, PROFILE_RELAYS) : relays;
-    for (const relay of locations) sources.push({ relay, kind });
+    for (const relay of locations) {
+      sources.push({ relay, kind });
+      sourceCountByRelay.set(relay, (sourceCountByRelay.get(relay) || 0) + 1);
+    }
   }
   const unavailable = new Set();
-  const targets = new Map();
-  const snapshots = new Map();
-  let items = [];
+  const cached = getCachedUserActivity(pubkey);
+  const targets = cached?.targets || new Map();
+  const saved = contentCache.get(activityCacheKey(pubkey));
+  const snapshots = new Map(Array.isArray(saved?.snapshots) ? saved.snapshots : []);
+  let items = cached?.items || [];
   let successes = 0;
+  let completedRelays = 0;
+  const completedSourcesByRelay = new Map();
+  const reportProgress = progress => {
+    try { onProgress(progress); } catch {}
+  };
+  reportProgress({ completed: 0, total: sourceCountByRelay.size });
   const pager = createActivityPager({
     sources,
     until: now(),
+    onSourceSettled: ({ source, completed }) => {
+      if (completed === 1) {
+        completedRelays = 0;
+        completedSourcesByRelay.clear();
+      }
+      const relayCompletedSources = (completedSourcesByRelay.get(source.relay) || 0) + 1;
+      completedSourcesByRelay.set(source.relay, relayCompletedSources);
+      if (relayCompletedSources === sourceCountByRelay.get(source.relay)) {
+        completedRelays++;
+        reportProgress({ completed: completedRelays, total: sourceCountByRelay.size, relay: source.relay });
+      }
+    },
     query: async (source, until, limit) => {
       const key = `${source.relay}:${source.kind}`;
       if (unavailable.has(key)) return [];
@@ -120,6 +163,12 @@ export async function createUserActivityLoader(pubkey) {
       await hydrateTargets(incoming);
       items = mergeActivity(items.filter(item => item.type !== 'follow'), incoming).filter(item => item.type !== 'zap' || !item.targetId
         || !targets.has(item.targetId) || targets.get(item.targetId).pubkey === item.account);
+      contentCache.set(activityCacheKey(pubkey), {
+        items,
+        targets: [...targets],
+        snapshots: [...snapshots],
+        followHistoryLimited: new Set([...snapshots.values()].map(event => event.created_at)).size < 2
+      }, ACTIVITY_CACHE_MS);
       return {
         items,
         targets,

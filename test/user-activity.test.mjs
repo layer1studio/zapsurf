@@ -114,3 +114,31 @@ test('same-second saturation is explicit and failed queries do not advance the c
   assert.equal(page.exhausted, false);
   assert.deepEqual(untils, [10, 10, 10]);
 });
+
+test('reports source progress once each query settles', async () => {
+  const progress = [];
+  const pager = createActivityPager({
+    sources: ['one', 'two'],
+    until: 10,
+    query: async source => [event(source, 1)],
+    onSourceSettled: result => progress.push(result)
+  });
+
+  await pager.next();
+
+  assert.deepEqual(progress.map(({ completed, total }) => [completed, total]).sort((a, b) => a[0] - b[0]), [[1, 2], [2, 2]]);
+  assert.deepEqual(new Set(progress.map(({ source }) => source)), new Set(['one', 'two']));
+});
+
+test('reports a failed source as settled', async () => {
+  const progress = [];
+  const pager = createActivityPager({
+    sources: ['offline'],
+    until: 10,
+    query: async () => { throw new Error('offline'); },
+    onSourceSettled: result => progress.push(result)
+  });
+
+  await assert.rejects(pager.next(), /offline/);
+  assert.deepEqual(progress.map(({ source, completed, total }) => [source, completed, total]), [['offline', 1, 1]]);
+});

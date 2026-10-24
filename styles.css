@@ -1113,6 +1113,8 @@ textarea {
   visibility: visible;
   transition-delay: 0s;
 }
+.emoji-search, .emoji-empty { grid-column: 1 / -1; width: 100%; min-width: 0; }
+.emoji-empty { color: var(--muted); font-size: 12px; }
 .mention-suggestions[hidden], .draft-preview[hidden] { display: none; }
 .emoji-choice, .mention-option {
   min-width: 36px;

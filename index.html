@@ -175,9 +175,10 @@
       <label class="field">Amount (sats)
         <input id="zap-amount" type="number" min="1" step="1" inputmode="numeric" required>
       </label>
-      <label class="field">Comment (optional)
+      <div class="field">
+        <label for="zap-comment">Comment (optional)</label>
         <input id="zap-comment" type="text" maxlength="280" placeholder="Great post ⚡">
-      </label>
+      </div>
       <button type="submit" class="button">⚡ Zap</button>
     </form>
     <p id="zap-status" class="hint" role="status"></p>

@@ -1,7 +1,7 @@
-import { pool, PROFILE_RELAYS, rememberProfile, profiles, parseProfile, ensureProfile, settings, MAX_MIN_ZAP_SATS, statsFor } from './state.js';
+import { pool, PROFILE_RELAYS, rememberProfile, profiles, parseProfile, ensureProfile, settings, MAX_MIN_ZAP_SATS, statsFor, actionsFor } from './state.js';
 import { FEEDS, DEFAULT_FEED_ID, loadTrendingItems } from './primal.js';
-import { loadHomeItems, loadThread as fetchThread, prefetchThread, ensureProfiles, loadNoteStats, refreshNoteStats, pollRecentNotes, refreshThread, loadProfileNotes, loadNoteEvent, fetchContactList } from './notes.js?v=0.4.0';
-import { countRecentZapsSent, loadNoteZaps as fetchNoteZaps, cachedZapCount, cachedZapSats } from './zapcount.js';
+import { loadHomeItems, loadThread as fetchThread, prefetchThread, ensureProfiles, loadNoteStats, refreshNoteStats, pollRecentNotes, refreshThread, loadProfileNotes, getCachedProfileNotes, refreshProfileNotes, loadNoteEvent, fetchContactList } from './notes.js?v=0.4.0';
+import { countRecentZapsSent, loadNoteZaps as fetchNoteZaps, cachedZapCount, cachedZapSats, cacheZapSummary, hasCachedZapSummary } from './zapcount.js';
 import { getSession, canSign, isOwn, logout, LOGIN_METHODS } from './signer.js';
 import { avatar, authorLine, badge, repostLine, renderContent, timeEl } from './render.js';
 import { actionBar, requireSigner } from './actions.js?v=0.2.0';
@@ -17,8 +17,9 @@ import { notePath, parseViewPath, profilePath, profileActivityPath } from './vie
 import { selectNewNotes } from './live-updates.mjs';
 import { fetchNotificationActivity } from './notification-service.js';
 import { mergeNotifications, notificationSince } from './notifications.mjs';
-import { createUserActivityLoader } from './user-activity-service.js';
-import { filterActivity } from './user-activity.mjs';
+import { createUserActivityLoader, getCachedUserActivity } from './user-activity-service.js';
+import { filterActivity, mergeActivity } from './user-activity.mjs';
+import { contentCache } from './cache.mjs';
 
 const SORT_KEY = 'zs-sort';
 const stat = key => item => statsFor(item.note.id)[key];
@@ -54,6 +55,73 @@ function sortItems(items) {
   return [...items].sort((a, b) => (sort.score(b) - sort.score(a)) || (b.note.created_at - a.note.created_at));
 }
 
+function mergeFeedItems(items, olderItems) {
+  const merged = new Map(olderItems.map(item => [item.note.id, item]));
+  for (const item of items) merged.set(item.note.id, item);
+  return [...merged.values()].sort((a, b) => b.note.created_at - a.note.created_at);
+}
+
+function feedSnapshotKey(feedId, pubkey) {
+  return `feed:${feedId}:${pubkey || 'public'}`;
+}
+
+function persistFeedSnapshot(result, feedId, pubkey) {
+  if (!result?.items?.length) return;
+  const stats = {};
+  const actions = {};
+  for (const { note } of result.items) {
+    stats[note.id] = statsFor(note.id);
+    actions[note.id] = actionsFor(note.id);
+  }
+  const authors = [...new Set(result.items.map(item => item.note.pubkey))];
+  const summaryAuthors = authors.filter(author => (!result.verifiedAuthors || result.verifiedAuthors.has(author))
+    && hasCachedZapSummary(author));
+  contentCache.set(feedSnapshotKey(feedId, pubkey), {
+    items: result.items,
+    isHome: result.isHome,
+    cursor: result.cursor,
+    fallback: result.fallback,
+    verifiedAuthors: [...(result.verifiedAuthors || [])],
+    zapCheckComplete: Boolean(result.zapCheckComplete),
+    summaries: Object.fromEntries(summaryAuthors.map(author => [author, {
+      count: cachedZapCount(author), sats: cachedZapSats(author)
+    }])),
+    stats,
+    actions
+  }, FEED_SNAPSHOT_CACHE_MS);
+}
+
+function restoreFeedSnapshot(feedId, pubkey, isHome) {
+  const saved = contentCache.get(feedSnapshotKey(feedId, pubkey));
+  if (!Array.isArray(saved?.items) || saved.isHome !== isHome) return null;
+  const items = saved.items.filter(item => item?.note?.id && typeof item.note.content === 'string'
+    && typeof item.note.pubkey === 'string' && Number.isSafeInteger(item.note.created_at));
+  if (!items.length) return null;
+  for (const [author, summary] of Object.entries(saved.summaries || {})) {
+    cacheZapSummary(author, summary?.count, summary?.sats);
+  }
+  for (const item of items) {
+    if (saved.stats?.[item.note.id]) Object.assign(statsFor(item.note.id), saved.stats[item.note.id]);
+    if (saved.actions?.[item.note.id]) Object.assign(actionsFor(item.note.id), saved.actions[item.note.id]);
+  }
+  const allAuthors = new Set(items.map(item => item.note.pubkey));
+  const verifiedAuthors = saved.zapCheckComplete
+    ? allAuthors
+    : new Set(Array.isArray(saved.verifiedAuthors) ? saved.verifiedAuthors : []);
+  return {
+    items,
+    isHome,
+    cursor: saved.cursor ?? null,
+    fallback: Boolean(saved.fallback),
+    verifiedAuthors,
+    zapCheckComplete: Boolean(saved.zapCheckComplete),
+    zapStage: 'validating',
+    authorCount: verifiedAuthors.size,
+    pendingNewNotes: [],
+    loading: false
+  };
+}
+
 const feedSelect = document.getElementById('feed-select');
 const showAllFollows = document.getElementById('show-all-follows');
 const minZapSatsInput = document.getElementById('min-zap-sats');
@@ -75,6 +143,9 @@ const MAX_EMPTY_PAGES = 3;
 const HOME_MAX_AGE_DAYS = 30;
 const LIVE_REFRESH_MS = 60_000;
 const MAX_PENDING_FEED_NOTES = 100;
+const ACTIVITY_PAGE_SIZE = 30;
+const FEED_SNAPSHOT_CACHE_MS = 12 * 60 * 60 * 1000;
+const NOTE_EVENT_CACHE_MS = 30 * 24 * 60 * 60 * 1000;
 
 let selectedNoteId = null;
 let shownNoteId = null;
@@ -272,15 +343,27 @@ async function showProfile(pubkey, { updateHistory = true } = {}) {
   const zaps = counts.get(pubkey) || 0;
   render(zaps, contactList ? contactList.tags.filter(t => t[0] === 'p').length : null);
 
+  const renderNotes = notes => {
+    if (token !== profileToken) return;
+    const render = () => {
+      if (token !== profileToken) return;
+      notesEl.replaceChildren(
+        el('h2', { class: 'replies-heading' }, `Recent notes (${notes.length})`),
+        ...(notes.length ? notes.map(note => profileNoteCard(note, zaps)) : [el('p', { class: 'replies-status' }, 'No recent notes found on their relays.') ]));
+    };
+    render();
+    loadNoteStats(notes, getSession()?.pubkey).then(render).catch(() => {});
+  };
   try {
-    const notes = await loadProfileNotes(pubkey);
-    if (token !== profileToken) return;
-    notesEl.replaceChildren(el('p', { class: 'replies-status busy' }, 'Loading interaction counts…'));
-    await loadNoteStats(notes, getSession()?.pubkey);
-    if (token !== profileToken) return;
-    notesEl.replaceChildren(
-      el('h2', { class: 'replies-heading' }, `Recent notes (${notes.length})`),
-      ...(notes.length ? notes.map(note => profileNoteCard(note, zaps)) : [el('p', { class: 'replies-status' }, 'No recent notes found on their relays.')]));
+    const cachedNotes = getCachedProfileNotes(pubkey);
+    if (cachedNotes) {
+      renderNotes(cachedNotes);
+      refreshProfileNotes(pubkey).then(notes => {
+        if (token === profileToken && notes.map(note => note.id).join() !== cachedNotes.map(note => note.id).join()) renderNotes(notes);
+      }).catch(() => {});
+    } else {
+      renderNotes(await loadProfileNotes(pubkey));
+    }
   } catch (err) {
     if (token !== profileToken) return;
     notesEl.replaceChildren(el('p', { class: 'replies-status' }, `Could not load notes: ${err.message}`));
@@ -380,21 +463,31 @@ async function showProfileActivity(pubkey, { updateHistory = true } = {}) {
 
   let loader = null;
   let busy = false;
-  let items = [];
-  let pageState = { exhausted: false, blocked: false };
-  const targets = new Map();
+  const cachedActivity = getCachedUserActivity(pubkey);
+  let items = cachedActivity?.items || [];
+  let visibleCount = ACTIVITY_PAGE_SIZE;
+  let pageState = { exhausted: false, blocked: false, followHistoryLimited: cachedActivity?.followHistoryLimited || false };
+  const targets = cachedActivity?.targets || new Map();
   const current = () => token === profileToken && activityRoute === routeToken;
   function renderItems() {
-    const visible = filterActivity(items, activeFilter);
+    const visible = filterActivity(items.slice(0, visibleCount), activeFilter);
     rows.replaceChildren(...(visible.length
       ? visible.map(item => activityItem(item, targets))
       : items.length ? [el('p', { class: 'replies-status' }, `No ${filterTypes.find(([type]) => type === activeFilter)[1].toLowerCase()} in the loaded activity.`)] : []));
     if (!busy && items.length) {
       const pagination = pageState.blocked
         ? ' Older activity could not be loaded without skipping events.'
-        : pageState.exhausted ? ' End of available activity.' : '';
+        : pageState.exhausted && items.length <= visibleCount ? ' End of available activity.' : '';
       status.textContent = `${visible.length} shown; ${items.length} ${items.length === 1 ? 'activity' : 'activities'} loaded.${pagination}`;
     }
+  }
+  function renderControls() {
+    const canLoadMore = items.length > visibleCount || (!pageState.exhausted && !pageState.blocked);
+    controls.replaceChildren(...[
+      canLoadMore ? el('button', { type: 'button', class: 'button secondary', onclick: loadMore }, 'Load more') : null,
+      pageState.partial || pageState.blocked
+        ? el('button', { type: 'button', class: 'link-button', onclick: () => load(true) }, 'Retry relays') : null
+    ].filter(Boolean));
   }
   const load = async (retry = false) => {
     if (busy || !current()) return;
@@ -403,13 +496,17 @@ async function showProfileActivity(pubkey, { updateHistory = true } = {}) {
     status.classList.add('busy');
     status.textContent = 'Loading activity from relays...';
     controls.replaceChildren();
+    const progress = ({ completed, total }) => {
+      if (!current()) return;
+      status.textContent = `Relays ${completed}/${total} complete...`;
+    };
     try {
       if (retry) loader = null;
-      if (!loader) loader = await createUserActivityLoader(pubkey);
+      if (!loader) loader = await createUserActivityLoader(pubkey, progress);
       if (!current()) return;
       const page = await loader.next();
       if (!current()) return;
-      items = page.items;
+      items = retry ? mergeActivity(items, page.items) : page.items;
       pageState = page;
       for (const [id, note] of page.targets) targets.set(id, note);
       identity.replaceChildren(activityAccount(pubkey));
@@ -417,12 +514,12 @@ async function showProfileActivity(pubkey, { updateHistory = true } = {}) {
       warnings.replaceChildren(
         ...(page.partial ? [el('p', { class: 'replies-status' }, 'Some relays are unavailable. Showing available activity.')] : []),
         ...(page.followHistoryLimited ? [el('p', { class: 'replies-status' }, 'New-follow history unavailable: older follow lists were not found.')] : []));
+      const visible = filterActivity(items.slice(0, visibleCount), activeFilter);
       status.textContent = page.blocked
         ? 'A relay response limit was reached. Older activity could not be loaded without skipping events.'
-        : page.exhausted ? items.length ? 'End of available activity.' : 'No activity found on available relays.'
-          : `${filterActivity(items, activeFilter).length} shown; ${items.length} ${items.length === 1 ? 'activity' : 'activities'} loaded.`;
-      if (!page.exhausted && !page.blocked) controls.append(el('button', { type: 'button', class: 'button secondary', onclick: () => load() }, 'Load more'));
-      if (page.partial || page.blocked) controls.append(el('button', { type: 'button', class: 'link-button', onclick: () => load(true) }, 'Retry relays'));
+        : page.exhausted && items.length <= visibleCount ? items.length ? 'End of available activity.' : 'No activity found on available relays.'
+          : `${visible.length} shown; ${items.length} ${items.length === 1 ? 'activity' : 'activities'} loaded.`;
+      renderControls();
     } catch (error) {
       if (!current()) return;
       status.textContent = `Could not load activity: ${error.message}`;
@@ -433,6 +530,22 @@ async function showProfileActivity(pubkey, { updateHistory = true } = {}) {
       status.classList.remove('busy');
     }
   };
+  const loadMore = async () => {
+    if (busy || !current()) return;
+    visibleCount += ACTIVITY_PAGE_SIZE;
+    if (items.length > visibleCount - ACTIVITY_PAGE_SIZE) {
+      renderItems();
+      renderControls();
+      return;
+    }
+    if (!pageState.exhausted && !pageState.blocked) await load();
+  };
+  if (items.length) {
+    identity.replaceChildren(activityAccount(pubkey));
+    renderItems();
+    status.textContent = 'Showing saved activity while checking relays for updates…';
+    renderControls();
+  }
   await load();
 }
 
@@ -591,6 +704,7 @@ function showNote(item, button = null, { updateHistory = true } = {}) {
   updateNoteNavigation();
 
   const { note, zaps, repostedBy } = item;
+  contentCache.set(`note-event:${note.id}`, note, NOTE_EVENT_CACHE_MS);
   const clientName = note.tags?.find(tag => tag[0] === 'client')?.[1];
   const zapsEl = el('section', { class: 'note-zaps' }, el('p', { class: 'replies-status busy' }, 'Loading zaps…'));
   const repliesEl = el('section', { class: 'replies' });
@@ -689,6 +803,7 @@ async function insertNewFeedNotes() {
       item.hasStats = true;
     }
     result.items.unshift(...pending);
+    persistFeedSnapshot(result, feedSelect.value, getSession()?.pubkey);
     const scrollTop = listEl.scrollTop;
     applyFilter();
     listEl.scrollTop = scrollTop;
@@ -808,6 +923,7 @@ async function loadMore() {
     result.cursor = page.cursor;
     result.emptyPages = fresh.length ? 0 : (result.emptyPages || 0) + 1;
     result.exhausted = result.emptyPages >= MAX_EMPTY_PAGES || result.cursor < now() - HOME_MAX_AGE_DAYS * 86400;
+    persistFeedSnapshot(result, HOME_FEED.id, getSession()?.pubkey);
   } catch (err) {
     console.warn('Loading older notes failed', err);
     result.failed = true;
@@ -818,6 +934,7 @@ async function loadMore() {
   const scrollTop = listEl.scrollTop;
   applyFilter();
   listEl.scrollTop = scrollTop;
+  persistFeedSnapshot(result, result.isHome ? HOME_FEED.id : feedSelect.value, getSession()?.pubkey);
   refreshStats();
 }
 
@@ -968,21 +1085,28 @@ async function loadFeed(feedId, { updateHistory = true, notice = '' } = {}) {
   const isHome = Boolean(feedId === HOME_FEED.id && session);
   const found = FEEDS.find(f => f.id === feedId && (session || !f.personal));
   const feed = isHome ? HOME_FEED : found || FEEDS.find(f => f.id === DEFAULT_FEED_ID);
-  lastResult = null;
+  const cachedResult = restoreFeedSnapshot(feed.id, session?.pubkey, isHome);
+  if (cachedResult) cachedResult.loading = true;
+  lastResult = cachedResult;
   selectedNoteId = null;
   updateNoteNavigation();
   profileOpen = null;
   profileToken++;
   moreObserver?.disconnect();
   renderSortOptions();
-  listEl.replaceChildren(...Array.from({ length: 6 }, skeletonItem));
   const firstStep = isHome
     ? 'Loading notes from the relays your follows publish to…'
     : `Loading ${feed.label.toLowerCase()} from Primal…`;
-  mainEl.replaceChildren(skeletonNote(firstStep));
+  if (cachedResult) {
+    applyFilter();
+    setStatus(`${statusEl.textContent} Checking relays for newer notes…`, true);
+  } else {
+    listEl.replaceChildren(...Array.from({ length: 6 }, skeletonItem));
+    mainEl.replaceChildren(skeletonNote(firstStep));
+  }
   const progress = text => {
     if (token !== loadToken) return;
-    setStatus(text, true);
+    setStatus(cachedResult ? `Showing saved feed. ${text}` : text, true);
     const message = mainEl.querySelector('.empty.busy');
     if (message) message.textContent = text;
   };
@@ -1000,6 +1124,10 @@ async function loadFeed(feedId, { updateHistory = true, notice = '' } = {}) {
       await ensureProfiles(items.map(item => item.note.pubkey));
     }
     if (token !== loadToken) return;
+    if (isHome && cachedResult) {
+      items = mergeFeedItems(items, cachedResult.items);
+      if (Number.isFinite(cachedResult.cursor)) cursor = Number.isFinite(cursor) ? Math.min(cursor, cachedResult.cursor) : cachedResult.cursor;
+    }
     const authors = [...new Set(items.map(item => item.note.pubkey))];
     const result = {
       items,
@@ -1014,6 +1142,7 @@ async function loadFeed(feedId, { updateHistory = true, notice = '' } = {}) {
       loading: true
     };
     lastResult = result;
+    persistFeedSnapshot(result, feed.id, session?.pubkey);
     const counts = await countRecentZapsSent(authors, (done, total, stage, author) => {
       if (token !== loadToken || result !== lastResult) return;
       result.zapStage = stage;
@@ -1021,6 +1150,9 @@ async function loadFeed(feedId, { updateHistory = true, notice = '' } = {}) {
         result.verifiedAuthors.add(author);
         for (const item of items) {
           if (item.note.pubkey === author) item.zaps = cachedZapCount(author);
+        }
+        if (result.verifiedAuthors.size === 1 || result.verifiedAuthors.size % 5 === 0) {
+          persistFeedSnapshot(result, feed.id, session?.pubkey);
         }
       }
       applyFilter();
@@ -1030,9 +1162,17 @@ async function loadFeed(feedId, { updateHistory = true, notice = '' } = {}) {
     result.zapCheckComplete = true;
     result.loading = false;
     applyFilter();
+    persistFeedSnapshot(result, feed.id, session?.pubkey);
     refreshStats();
   } catch (err) {
     if (token !== loadToken) return;
+    if (cachedResult) {
+      cachedResult.loading = false;
+      lastResult = cachedResult;
+      applyFilter();
+      setStatus(`${statusEl.textContent} Could not refresh from relays.`, false);
+      return;
+    }
     setStatus(`Failed to load: ${err.message}`);
     listEl.replaceChildren();
     mainEl.replaceChildren(el('p', { class: 'empty' }, 'Could not load this feed. Try another one.'));
@@ -1107,7 +1247,9 @@ function notificationIcon(type) {
 
 function renderNotificationList() {
   if (!notificationState.items.length) {
-    const message = notificationState.failed
+    const message = notificationState.busy
+      ? 'Loading activity from relays…'
+      : notificationState.failed
       ? 'Could not load activity. It will retry while ZapSurf is open.'
       : 'No activity in the last 30 days.';
     notificationsListEl.replaceChildren(el('p', { class: 'notifications-empty', role: 'status' }, message));
@@ -1140,6 +1282,7 @@ function renderNotificationList() {
 
 function openNotifications() {
   if (!notificationState.pubkey) return;
+  if (!notificationState.busy && notificationState.lastPollAt === null) pollNotifications();
   notificationState.readAt = now();
   saveNotificationReadAt();
   updateNotificationBadge();
@@ -1346,6 +1489,7 @@ document.addEventListener('zs:published', ({ detail: event }) => {
     renderReplies();
   } else if (!event.tags.some(t => t[0] === 'e') && lastResult?.isHome) {
     lastResult.items.unshift({ note: event, zaps: cachedZapCount(event.pubkey) });
+    persistFeedSnapshot(lastResult, HOME_FEED.id, getSession()?.pubkey);
     selectedNoteId = event.id;
     applyFilter();
   }

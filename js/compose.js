@@ -41,6 +41,54 @@ const EMOJI = [
   '💖', '💘', '💝', '💟', '✨', '⭐', '🌟', '🔥',
   '⚡', '☀️', '🌈', '🎉', '🎊', '🥂', '🍻', '💐'
 ];
+const EMOJI_NAMES = new Map([
+  ['😀', 'grinning face smile happy'], ['😃', 'smiling face open mouth happy'], ['😄', 'smiling face smiling eyes happy'], ['😁', 'beaming face grin'],
+  ['😆', 'laughing squint'], ['😅', 'smile sweat nervous'], ['😂', 'joy laugh tears'], ['🤣', 'rolling floor laugh rofl'],
+  ['🥲', 'smile tear grateful sad'], ['🥹', 'holding back tears touched'], ['☺️', 'smiling face blush'], ['😊', 'smiling eyes blush'],
+  ['😇', 'angel halo innocent'], ['🙂', 'slight smile happy'], ['🙃', 'upside down silly'], ['😉', 'wink playful'],
+  ['😍', 'heart eyes love'], ['🥰', 'smiling hearts love'], ['😘', 'kiss love'], ['😗', 'kissing face'],
+  ['😙', 'kissing smile'], ['😚', 'kissing closed eyes'], ['😋', 'yum delicious tongue'], ['😛', 'tongue playful'],
+  ['😜', 'wink tongue silly'], ['🤪', 'zany crazy goofy'], ['😝', 'squint tongue silly'], ['🤑', 'money rich'],
+  ['🤗', 'hug hands'], ['🤭', 'hand over mouth giggle'], ['🫢', 'open eyes mouth surprise'], ['🫣', 'peeking eye shy'],
+  ['🤫', 'shush quiet secret'], ['🤔', 'thinking face wonder'], ['🫡', 'salute respect'], ['🤐', 'zipper mouth secret'],
+  ['🤨', 'raised eyebrow skeptical'], ['😐', 'neutral face'], ['😑', 'expressionless blank'], ['😶', 'no mouth speechless'],
+  ['🫥', 'dotted line invisible hidden'], ['😏', 'smirk sly'], ['😒', 'unamused annoyed'], ['🙄', 'eye roll'],
+  ['😬', 'grimace awkward'], ['😮‍💨', 'sigh relief tired'], ['🤥', 'lying pinocchio'], ['🫨', 'shaking shock'],
+  ['😌', 'relieved calm'], ['😔', 'pensive sad'], ['😪', 'sleepy tear'], ['🤤', 'drooling'],
+  ['😴', 'sleep zzz tired'], ['🥱', 'yawn tired bored'], ['😷', 'mask sick'], ['🤒', 'thermometer fever sick'],
+  ['🤕', 'bandage hurt injured'], ['🤢', 'nauseated sick green'], ['🤮', 'vomit sick'], ['🤧', 'sneeze sick'],
+  ['🥵', 'hot overheated'], ['🥶', 'cold freezing'], ['🥴', 'woozy drunk dizzy'], ['😵', 'dizzy dead'],
+  ['😵‍💫', 'spiral eyes dizzy'], ['🤯', 'exploding head mind blown'], ['🤠', 'cowboy hat'], ['🥳', 'party celebration'],
+  ['🥸', 'disguise glasses'], ['😎', 'sunglasses cool'], ['🤓', 'nerd glasses'], ['🧐', 'monocle curious'],
+  ['😕', 'confused'], ['🫤', 'diagonal mouth unsure'], ['😟', 'worried'], ['🙁', 'slightly frowning sad'],
+  ['☹️', 'frowning sad'], ['😮', 'open mouth surprised'], ['😯', 'hushed surprised'], ['😲', 'astonished shocked'],
+  ['😳', 'flushed embarrassed'], ['🥺', 'pleading please puppy eyes'], ['😦', 'frowning open mouth'], ['😧', 'anguished'],
+  ['😨', 'fearful scared'], ['😰', 'anxious sweat nervous'], ['😥', 'sad relieved sweat'], ['😢', 'cry tear sad'],
+  ['😭', 'loudly crying sob'], ['😱', 'scream fear shocked'], ['😖', 'confounded'], ['😣', 'persevering'],
+  ['😞', 'disappointed sad'], ['😓', 'downcast sweat'], ['😩', 'weary tired'], ['😫', 'tired exhausted'],
+  ['😤', 'steam nose angry triumph'], ['😡', 'pouting angry mad'], ['😠', 'angry mad'], ['🤬', 'swearing cursing angry'],
+  ['😈', 'smiling devil imp'], ['👿', 'angry devil imp'], ['💀', 'skull death dead'], ['💩', 'poop poo'],
+  ['🤡', 'clown'], ['👻', 'ghost spooky'], ['💯', 'hundred points perfect'], ['💢', 'anger symbol'],
+  ['💥', 'collision boom explosion'], ['💫', 'dizzy star'], ['💦', 'sweat drops water'], ['💨', 'dash wind'],
+  ['🕳️', 'hole'], ['💤', 'sleep zzz tired'], ['👋', 'waving hand hello goodbye'], ['🤚', 'raised back hand stop'],
+  ['🖐️', 'hand fingers'], ['✋', 'raised hand stop high five'], ['🖖', 'vulcan salute star trek'], ['🫱', 'rightwards hand'],
+  ['🫲', 'leftwards hand'], ['🫳', 'palm down hand'], ['🫴', 'palm up hand'], ['👌', 'ok hand perfect'],
+  ['🤌', 'pinched fingers'], ['🤏', 'pinching hand small'], ['✌️', 'victory peace fingers'], ['🤞', 'crossed fingers luck'],
+  ['🫰', 'finger heart love'], ['🤟', 'love you hand'], ['🤘', 'rock horns'], ['🤙', 'call me hand'],
+  ['👈', 'point left finger'], ['👉', 'point right finger'], ['👆', 'point up finger'], ['👇', 'point down finger'],
+  ['☝️', 'index finger up'], ['🫵', 'point at you'], ['👍', 'thumbs up like yes'], ['👎', 'thumbs down dislike no'],
+  ['✊', 'raised fist power'], ['👊', 'fist bump punch'], ['🤛', 'left fist'], ['🤜', 'right fist'],
+  ['👏', 'clap applause'], ['🙌', 'raised hands celebrate hooray'], ['👐', 'open hands'], ['🤲', 'palms up hands prayer'],
+  ['🙏', 'folded hands prayer please thanks'], ['💪', 'flexed biceps muscle strong'], ['🫶', 'heart hands love'],
+  ['❤️', 'red heart love'], ['🧡', 'orange heart love'], ['💛', 'yellow heart love'], ['💚', 'green heart love'],
+  ['💙', 'blue heart love'], ['💜', 'purple heart love'], ['🖤', 'black heart love'], ['🤍', 'white heart love'],
+  ['🤎', 'brown heart love'], ['💔', 'broken heart heartbreak'], ['❤️‍🔥', 'heart on fire passion'], ['💕', 'two hearts love'],
+  ['💞', 'revolving hearts love'], ['💓', 'beating heart love'], ['💗', 'growing heart love'], ['💖', 'sparkling heart love'],
+  ['💘', 'heart arrow cupid love'], ['💝', 'heart ribbon gift love'], ['💟', 'heart decoration love'], ['✨', 'sparkles shiny magic'],
+  ['⭐', 'star'], ['🌟', 'glowing star'], ['🔥', 'fire flame hot lit'], ['⚡', 'lightning bolt electric zap'],
+  ['☀️', 'sun sunny'], ['🌈', 'rainbow'], ['🎉', 'party popper celebration'], ['🎊', 'confetti ball celebration'],
+  ['🥂', 'clinking glasses cheers celebration'], ['🍻', 'beer mugs cheers'], ['💐', 'bouquet flowers']
+]);
 const NOSTR_REF = /(?:npub|nprofile)1[02-9ac-hj-np-z]{20,}/gi;
 const followedProfiles = new Map();
 const followedProfileLoads = new Map();
@@ -76,20 +124,69 @@ function editorContent(input, mentions) {
   return serializeMentions(input.value, mentions, pubkey => nip19.npubEncode(pubkey));
 }
 
-function createEditorTools(input) {
-  const state = { mentions: [], lastValue: input.value, queryId: 0, suggestionIndex: 0, nip05Timer: null };
+export function createEmojiPicker(input, insertEmoji) {
   const emojiButton = el('button', {
     type: 'button', class: 'icon-button emoji-toggle', 'aria-label': 'Insert emoji', title: 'Insert emoji', 'aria-expanded': 'false'
   }, '☺');
-  const emojiPicker = el('div', { class: 'emoji-picker', role: 'group', 'aria-label': 'Emoji picker', 'aria-hidden': 'true' },
-    ...EMOJI.map(emoji => el('button', { type: 'button', class: 'emoji-choice', 'aria-label': `Insert ${emoji}` }, emoji)));
+  const search = el('input', {
+    type: 'search', class: 'emoji-search', placeholder: 'Search emoji', 'aria-label': 'Search emoji', autocomplete: 'off'
+  });
+  const empty = el('span', { class: 'emoji-empty', role: 'status', hidden: true }, 'No matching emoji.');
+  const choices = EMOJI.map(emoji => el('button', {
+    type: 'button', class: 'emoji-choice', 'aria-label': `Insert ${EMOJI_NAMES.get(emoji) || emoji}`,
+    'data-search': `${emoji} ${EMOJI_NAMES.get(emoji) || ''}`.toLocaleLowerCase()
+  }, emoji));
+  const emojiPicker = el('div', { class: 'emoji-picker', role: 'group', 'aria-label': 'Emoji picker', 'aria-hidden': 'true' }, search, empty, ...choices);
   emojiPicker.inert = true;
   const toolbar = el('div', { class: 'compose-tools' }, emojiButton, emojiPicker);
+
+  const setOpen = open => {
+    emojiPicker.classList.toggle('is-open', open);
+    emojiPicker.inert = !open;
+    emojiPicker.setAttribute('aria-hidden', String(!open));
+    emojiButton.setAttribute('aria-expanded', String(open));
+  };
+  const filterChoices = () => {
+    const query = search.value.trim().toLocaleLowerCase();
+    let matches = 0;
+    for (const choice of choices) {
+      choice.hidden = !choice.dataset.search.includes(query);
+      if (!choice.hidden) matches++;
+    }
+    empty.hidden = matches > 0;
+  };
+
+  emojiButton.addEventListener('click', () => setOpen(!emojiPicker.classList.contains('is-open')));
+  search.addEventListener('input', filterChoices);
+  emojiPicker.addEventListener('mousedown', event => {
+    if (event.target.closest('.emoji-choice')) event.preventDefault();
+  });
+  emojiPicker.addEventListener('click', event => {
+    const choice = event.target.closest('.emoji-choice');
+    if (!choice) return;
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    if (insertEmoji(choice.textContent, start, end) === false) return;
+    close();
+  });
+
+  function close() {
+    setOpen(false);
+    search.value = '';
+    filterChoices();
+  }
+
+  return { toolbar, close };
+}
+
+function createEditorTools(input) {
+  const state = { mentions: [], lastValue: input.value, queryId: 0, suggestionIndex: 0, nip05Timer: null };
+  const emojiTools = createEmojiPicker(input, (emoji, start, end) => applyEdit(start, end, emoji));
   const suggestions = el('div', { class: 'mention-suggestions', role: 'listbox', 'aria-label': 'People suggestions', hidden: true });
   const preview = el('section', { class: 'draft-preview', hidden: true },
     el('h3', {}, 'Preview'),
     el('div', { class: 'draft-preview-content' }));
-  input.after(toolbar, suggestions, preview);
+  input.after(emojiTools.toolbar, suggestions, preview);
   input.setAttribute('aria-autocomplete', 'list');
 
   const refreshPreview = () => {
@@ -113,13 +210,6 @@ function createEditorTools(input) {
     refreshPreview();
     updateSuggestions();
     return true;
-  }
-
-  function setEmojiPickerOpen(open) {
-    emojiPicker.classList.toggle('is-open', open);
-    emojiPicker.inert = !open;
-    emojiPicker.setAttribute('aria-hidden', String(!open));
-    emojiButton.setAttribute('aria-expanded', String(open));
   }
 
   function queryAtCursor() {
@@ -214,16 +304,6 @@ function createEditorTools(input) {
     }
   }
 
-  emojiButton.addEventListener('click', () => {
-    setEmojiPickerOpen(!emojiPicker.classList.contains('is-open'));
-  });
-  emojiPicker.addEventListener('mousedown', event => event.preventDefault());
-  emojiPicker.addEventListener('click', event => {
-    const button = event.target.closest('.emoji-choice');
-    if (!button) return;
-    applyEdit(input.selectionStart, input.selectionEnd, button.textContent);
-    setEmojiPickerOpen(false);
-  });
   input.addEventListener('input', () => {
     state.mentions = rebaseMentions(state.lastValue, input.value, state.mentions);
     state.lastValue = input.value;
@@ -264,7 +344,7 @@ function createEditorTools(input) {
       state.lastValue = '';
       state.queryId++;
       input.value = '';
-      setEmojiPickerOpen(false);
+      emojiTools.close();
       suggestions.hidden = true;
       refreshPreview();
     }
@@ -319,11 +399,11 @@ document.getElementById('compose-close').addEventListener('click', () => dialog.
 
 export function inlineReplyBox(note) {
   const input = el('textarea', { class: 'reply-input', rows: '3', maxlength: String(MAX_LENGTH), placeholder: `Reply to ${parseProfile(note.pubkey).name}…`, 'aria-label': 'Reply' });
-  const editor = createEditorTools(input);
   const status = el('span', { class: 'form-status', role: 'status' });
   const box = el('form', { class: 'inline-reply' },
     input,
     el('div', { class: 'compose-footer' }, status, el('button', { class: 'button', type: 'submit' }, 'Reply')));
+  const editor = createEditorTools(input);
   input.addEventListener('keydown', event => {
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) box.requestSubmit();
   });

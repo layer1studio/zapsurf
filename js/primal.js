@@ -1,11 +1,13 @@
 import { pool, DEFAULT_RELAYS, rememberProfile, statsFor, actionsFor } from './state.js';
 import { hoursAgo, isReply, chunk } from './util.js';
+import { contentCache } from './cache.mjs';
 
 // Primal's cache server is only used for trending feeds; everything else comes from relays.
 const PRIMAL_CACHE = 'wss://cache1.primal.net/v1';
 const REQUEST_TIMEOUT_MS = 15_000;
 const IDLE_CLOSE_MS = 60_000;
 const CACHE_TTL_MS = 3 * 60_000;
+const PERSISTENT_FEED_CACHE_MS = 12 * 60 * 60 * 1000;
 const NOTE_STATS_KIND = 10_000_100;
 const NOTE_ACTIONS_KIND = 10_000_115;
 
@@ -159,6 +161,8 @@ export async function loadTrendingItems(feed, pubkey, onProgress = () => {}) {
   const key = `${feed.id}:${pubkey || ''}`;
   const cached = feedCache.get(key);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.result;
+  const persisted = contentCache.get(`trending-feed:${key}`);
+  const hasPersisted = Array.isArray(persisted?.items) && persisted.items.every(item => item?.note?.id);
 
   let result;
   try {
@@ -168,12 +172,18 @@ export async function loadTrendingItems(feed, pubkey, onProgress = () => {}) {
     if (notes.length === 0) throw new Error('Primal returned no notes');
     result = { items: notes.map(note => ({ note, hasStats: true })), source: 'Primal' };
   } catch (err) {
-    if (feed.personal) throw err;
-    console.warn('Primal trending failed, ranking from relays instead', err);
-    onProgress('Primal is unavailable. Ranking recent notes from relays instead…');
-    const notes = await relayRankedNotes(feed, onProgress);
-    result = { items: notes.map(note => ({ note })), source: 'relays' };
+    if (hasPersisted) {
+      onProgress('Primal is unavailable. Showing saved notes while relays recover…');
+      result = persisted;
+    } else {
+      if (feed.personal) throw err;
+      console.warn('Primal trending failed, ranking from relays instead', err);
+      onProgress('Primal is unavailable. Ranking recent notes from relays instead…');
+      const notes = await relayRankedNotes(feed, onProgress);
+      result = { items: notes.map(note => ({ note })), source: 'relays' };
+    }
   }
   feedCache.set(key, { at: Date.now(), result });
+  contentCache.set(`trending-feed:${key}`, result, PERSISTENT_FEED_CACHE_MS);
   return result;
 }

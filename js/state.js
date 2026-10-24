@@ -1,5 +1,6 @@
 import { SimplePool, nip19 } from './deps.js';
 import { safeHttpUrl, store } from './util.js';
+import { contentCache } from './cache.mjs';
 
 export const DEFAULT_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net'];
 export const PROFILE_RELAYS = ['wss://purplepag.es', 'wss://relay.primal.net', 'wss://relay.damus.io'];
@@ -10,10 +11,15 @@ export const pool = new SimplePool();
 export const profiles = new Map();
 export const noteStats = new Map();
 export const noteActions = new Map();
+const PROFILE_CACHE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function rememberProfile(ev) {
+  if (ev?.kind !== 0 || typeof ev.pubkey !== 'string' || typeof ev.content !== 'string') return;
   const prev = profiles.get(ev.pubkey);
-  if (!prev || prev.created_at < ev.created_at) profiles.set(ev.pubkey, ev);
+  if (!prev || prev.created_at < ev.created_at) {
+    profiles.set(ev.pubkey, ev);
+    contentCache.set(`profile-event:${ev.pubkey}`, ev, PROFILE_CACHE_MS);
+  }
 }
 
 export function parseProfile(pubkey) {
@@ -35,8 +41,12 @@ export function parseProfile(pubkey) {
 
 export async function ensureProfile(pubkey) {
   if (!profiles.has(pubkey)) {
-    const ev = await pool.get(PROFILE_RELAYS, { kinds: [0], authors: [pubkey] }, { maxWait: 6000 }).catch(() => null);
-    if (ev) rememberProfile(ev);
+    const cached = contentCache.get(`profile-event:${pubkey}`);
+    if (cached?.kind === 0 && cached.pubkey === pubkey && typeof cached.content === 'string') rememberProfile(cached);
+    if (!profiles.has(pubkey)) {
+      const ev = await pool.get(PROFILE_RELAYS, { kinds: [0], authors: [pubkey] }, { maxWait: 6000 }).catch(() => null);
+      if (ev) rememberProfile(ev);
+    }
   }
   return parseProfile(pubkey);
 }

@@ -3,8 +3,11 @@ import { pool, DEFAULT_RELAYS, ensureProfile } from './state.js';
 import { getLnurlPay } from './lnurl.js';
 import { validateZapReceipt, validateZapActivityReceipt } from './zap-validation.mjs';
 import { chunk, now } from './util.js';
+import { contentCache } from './cache.mjs';
 
 const ZAP_WINDOW_SECS = 14 * 24 * 60 * 60;
+const ZAP_SUMMARY_CACHE_MS = 12 * 60 * 60 * 1000;
+const NOTE_ZAPS_CACHE_MS = 60_000;
 const zapCountCache = new Map();
 const zapSatsCache = new Map();
 const providerPubkeyCache = new Map();
@@ -52,6 +55,7 @@ function providerPubkeyFor(recipient) {
 
 export async function countRecentZapsSent(pubkeys, onProgress = () => {}) {
   const unique = [...new Set(pubkeys)];
+  for (const pubkey of unique) restoreZapSummary(pubkey);
   const unknown = unique.filter(pk => !zapCountCache.has(pk));
   const since = now() - ZAP_WINDOW_SECS;
   let checked = 0;
@@ -92,6 +96,10 @@ export async function countRecentZapsSent(pubkeys, onProgress = () => {}) {
       }));
       zapCountCache.set(sender, byId.size);
       zapSatsCache.set(sender, [...byId.values()].reduce((sum, sats) => sum + sats, 0));
+      contentCache.set(`zap-summary:${sender}`, {
+        count: zapCountCache.get(sender),
+        sats: zapSatsCache.get(sender)
+      }, ZAP_SUMMARY_CACHE_MS);
       onProgress(++checked, unique.length, 'validating', sender);
     }));
   }));
@@ -99,12 +107,16 @@ export async function countRecentZapsSent(pubkeys, onProgress = () => {}) {
 }
 
 export async function loadNoteZaps(note) {
+  const cached = contentCache.get(`note-zaps:${note.id}`);
+  if (Array.isArray(cached)) return cached;
   const receipts = await pool.querySync(DEFAULT_RELAYS, {
     kinds: [9735], '#e': [note.id], limit: 5000
   }, { maxWait: 8000 });
   const uniqueReceipts = [...new Map(receipts.map(receipt => [receipt.id, receipt])).values()];
   const zaps = await Promise.all(uniqueReceipts.map(receipt => validateZapForNote(receipt, note)));
-  return zaps.filter(Boolean).sort((a, b) => b.createdAt - a.createdAt);
+  const verified = zaps.filter(Boolean).sort((a, b) => b.createdAt - a.createdAt);
+  contentCache.set(`note-zaps:${note.id}`, verified, NOTE_ZAPS_CACHE_MS);
+  return verified;
 }
 
 export function validateSentZap(receipt, sender) {
@@ -137,9 +149,41 @@ export async function validateZapForNote(receipt, note) {
 }
 
 export function cachedZapCount(pubkey) {
+  restoreZapSummary(pubkey);
   return zapCountCache.get(pubkey) || 0;
 }
 
 export function cachedZapSats(pubkey) {
+  restoreZapSummary(pubkey);
   return zapSatsCache.get(pubkey) || 0;
+}
+
+export function hasCachedZapSummary(pubkey) {
+  restoreZapSummary(pubkey);
+  return zapCountCache.has(pubkey) && zapSatsCache.has(pubkey);
+}
+
+function restoreZapSummary(pubkey) {
+  if (zapCountCache.has(pubkey)) return;
+  const summary = contentCache.get(`zap-summary:${pubkey}`);
+  if (!Number.isSafeInteger(summary?.count) || summary.count < 0 || !Number.isSafeInteger(summary?.sats) || summary.sats < 0) return;
+  zapCountCache.set(pubkey, summary.count);
+  zapSatsCache.set(pubkey, summary.sats);
+}
+
+export function cacheZapSummary(pubkey, count, sats) {
+  if (!Number.isSafeInteger(count) || count < 0 || !Number.isSafeInteger(sats) || sats < 0) return false;
+  zapCountCache.set(pubkey, count);
+  zapSatsCache.set(pubkey, sats);
+  contentCache.set(`zap-summary:${pubkey}`, { count, sats }, ZAP_SUMMARY_CACHE_MS);
+  return true;
+}
+
+export async function refreshRecentZapsSent(pubkeys, onProgress = () => {}) {
+  for (const pubkey of new Set(pubkeys)) {
+    zapCountCache.delete(pubkey);
+    zapSatsCache.delete(pubkey);
+    contentCache.remove(`zap-summary:${pubkey}`);
+  }
+  return countRecentZapsSent(pubkeys, onProgress);
 }

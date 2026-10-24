@@ -61,7 +61,7 @@ export function followActivity(snapshots, pubkey) {
   return mergeActivity([], items);
 }
 
-export function createActivityPager({ sources, query, until, limit = 60, maxLimit = 960 }) {
+export function createActivityPager({ sources, query, until, limit = 60, maxLimit = 960, onSourceSettled }) {
   let cursor = until;
   let exhausted = false;
   let blocked = false;
@@ -72,19 +72,26 @@ export function createActivityPager({ sources, query, until, limit = 60, maxLimi
       if (busy) throw new Error('Activity is already loading.');
       if (exhausted || blocked) return { events: [], exhausted, blocked };
       busy = true;
+      let completedSources = 0;
       try {
         const results = await Promise.all(sources.map(async source => {
-          let size = limit;
-          while (true) {
-            const received = await query(source, cursor, size);
-            const events = received.filter(event => Number.isSafeInteger(event.created_at) && event.created_at >= 0 && event.created_at <= cursor);
-            const saturated = received.length >= size;
-            const oldest = events.length ? Math.min(...events.map(event => event.created_at)) : cursor;
-            if (saturated && oldest === cursor && size < maxLimit) {
-              size = Math.min(size * 2, maxLimit);
-              continue;
+          try {
+            let size = limit;
+            while (true) {
+              const received = await query(source, cursor, size);
+              const events = received.filter(event => Number.isSafeInteger(event.created_at) && event.created_at >= 0 && event.created_at <= cursor);
+              const saturated = received.length >= size;
+              const oldest = events.length ? Math.min(...events.map(event => event.created_at)) : cursor;
+              if (saturated && oldest === cursor && size < maxLimit) {
+                size = Math.min(size * 2, maxLimit);
+                continue;
+              }
+              return { events, saturated, oldest };
             }
-            return { events, saturated, oldest };
+          } finally {
+            try {
+              onSourceSettled?.({ source, completed: ++completedSources, total: sources.length });
+            } catch {}
           }
         }));
         const full = results.filter(result => result.saturated);

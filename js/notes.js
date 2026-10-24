@@ -2,6 +2,7 @@ import { nip57, nip10 } from './deps.js';
 import { pool, PROFILE_RELAYS, DEFAULT_RELAYS, profiles, rememberProfile, statsFor, actionsFor } from './state.js';
 import { fetchRelayLists, getWriteRelays, planOutbox, uniqueRelays } from './relays.js';
 import { chunk, now, isReply, isDirectReplyTo, emit } from './util.js';
+import { contentCache } from './cache.mjs';
 
 const HOME_WINDOW_HOURS = 48;
 const HOME_LIMIT = 150;
@@ -9,13 +10,22 @@ const RELAY_LIMIT = 300;
 const QUERY_WAIT_MS = 7000;
 const MAX_THREAD_DEPTH = 8;
 const MAX_THREAD_REPLIES = 500;
+const PROFILE_NOTES_CACHE_MS = 6 * 60 * 60 * 1000;
+const NOTE_EVENT_CACHE_MS = 30 * 24 * 60 * 60 * 1000;
+const NOTE_STATS_CACHE_MS = 2 * 60 * 60 * 1000;
 
 function newest(events) {
   return events.reduce((best, ev) => (!best || ev.created_at > best.created_at ? ev : best), null);
 }
 
 export async function ensureProfiles(pubkeys) {
-  const missing = [...new Set(pubkeys)].filter(pk => !profiles.has(pk));
+  const unique = [...new Set(pubkeys)];
+  for (const pubkey of unique) {
+    if (profiles.has(pubkey)) continue;
+    const cached = contentCache.get(`profile-event:${pubkey}`);
+    if (cached?.kind === 0 && cached.pubkey === pubkey && typeof cached.content === 'string') rememberProfile(cached);
+  }
+  const missing = unique.filter(pk => !profiles.has(pk));
   await Promise.all(chunk(missing, 200).map(async authors => {
     const events = await pool.querySync(PROFILE_RELAYS, { kinds: [0], authors }, { maxWait: QUERY_WAIT_MS }).catch(() => []);
     for (const ev of events) rememberProfile(ev);
@@ -24,9 +34,8 @@ export async function ensureProfiles(pubkeys) {
 
 const followsCache = new Map();
 const HEX_PUBKEY = /^[0-9a-f]{64}$/;
-
 const followsFrom = contactList =>
-  new Set(contactList?.tags.filter(t => t[0] === 'p' && HEX_PUBKEY.test(t[1] || '')).map(t => t[1]) || []);
+  new Set(contactList?.tags.filter(tag => tag[0] === 'p' && HEX_PUBKEY.test(tag[1] || '')).map(tag => tag[1]) || []);
 
 // Always queries relays, so it can be used as the base for editing a contact list.
 export async function fetchContactList(pubkey) {
@@ -45,19 +54,48 @@ export function setCachedFollows(pubkey, contactList) {
   followsCache.set(pubkey, followsFrom(contactList));
 }
 
-export async function loadProfileNotes(pubkey, limit = 30) {
+const profileNotesCacheKey = (pubkey, limit) => `profile-notes:${pubkey}:${limit}`;
+
+async function fetchProfileNotes(pubkey, limit) {
   const relays = uniqueRelays(await getWriteRelays(pubkey), DEFAULT_RELAYS);
   const events = await pool.querySync(relays, { kinds: [1], authors: [pubkey], limit: limit * 3 }, { maxWait: QUERY_WAIT_MS });
-  return [...new Map(events.map(ev => [ev.id, ev])).values()]
+  const notes = [...new Map(events.map(ev => [ev.id, ev])).values()]
     .filter(ev => !isReply(ev))
     .sort((a, b) => b.created_at - a.created_at)
     .slice(0, limit);
+  contentCache.set(profileNotesCacheKey(pubkey, limit), notes, PROFILE_NOTES_CACHE_MS);
+  for (const note of notes) contentCache.set(`note-event:${note.id}`, note, NOTE_EVENT_CACHE_MS);
+  return notes;
+}
+
+export async function loadProfileNotes(pubkey, limit = 30) {
+  const cached = contentCache.get(profileNotesCacheKey(pubkey, limit));
+  if (validProfileNotes(cached, pubkey)) return cached;
+  return fetchProfileNotes(pubkey, limit);
+}
+
+function validProfileNotes(notes, pubkey) {
+  return Array.isArray(notes) && notes.every(note => note?.kind === 1 && note.pubkey === pubkey
+    && typeof note.id === 'string' && typeof note.content === 'string' && Number.isSafeInteger(note.created_at));
+}
+
+export function getCachedProfileNotes(pubkey, limit = 30) {
+  const cached = contentCache.get(profileNotesCacheKey(pubkey, limit));
+  return validProfileNotes(cached, pubkey) ? cached : null;
+}
+
+export function refreshProfileNotes(pubkey, limit = 30) {
+  return fetchProfileNotes(pubkey, limit);
 }
 
 export async function loadNoteEvent(id, relayHints = []) {
+  const cached = contentCache.get(`note-event:${id}`);
+  if (cached?.id === id && cached.kind === 1) return cached;
   const relays = uniqueRelays(relayHints, DEFAULT_RELAYS);
   const events = await pool.querySync(relays, { kinds: [1], ids: [id], limit: 1 }, { maxWait: QUERY_WAIT_MS });
-  return events.find(event => event.id === id && event.kind === 1) || null;
+  const note = events.find(event => event.id === id && event.kind === 1) || null;
+  if (note) contentCache.set(`note-event:${id}`, note, NOTE_EVENT_CACHE_MS);
+  return note;
 }
 
 function parseRepost(repost, notesById) {
@@ -177,10 +215,20 @@ const statsLoaded = new Set();
 // Batch counts for feed lists; uses the default relays only, so treat as approximate.
 export async function loadNoteStats(notes, self) {
   const ids = [...new Set(notes.map(n => n.id))].filter(id => !statsLoaded.has(id));
+  for (const id of ids) {
+    const cached = contentCache.get(`note-stats:${self || ''}:${id}`);
+    if (cached?.stats) Object.assign(statsFor(id), cached.stats);
+    if (cached?.actions) Object.assign(actionsFor(id), cached.actions);
+  }
   await Promise.all(chunk(ids, 100).map(async batch => {
     const events = await pool.querySync(DEFAULT_RELAYS, { kinds: [1, 6, 7, 9735], '#e': batch, limit: 5000 }, { maxWait: QUERY_WAIT_MS }).catch(() => []);
     applyInteractions([...new Map(events.map(ev => [ev.id, ev])).values()], batch, self);
-    for (const id of batch) statsLoaded.add(id);
+    for (const id of batch) {
+      statsLoaded.add(id);
+      contentCache.set(`note-stats:${self || ''}:${id}`, {
+        stats: statsFor(id), actions: actionsFor(id)
+      }, NOTE_STATS_CACHE_MS);
+    }
   }));
 }
 
@@ -191,6 +239,9 @@ export async function refreshNoteStats(notes, self) {
       kinds: [1, 6, 7, 9735], '#e': batch, limit: 5000
     }, { maxWait: QUERY_WAIT_MS }).catch(() => []);
     applyInteractions([...new Map(events.map(event => [event.id, event])).values()], batch, self);
+    for (const id of batch) contentCache.set(`note-stats:${self || ''}:${id}`, {
+      stats: statsFor(id), actions: actionsFor(id)
+    }, NOTE_STATS_CACHE_MS);
   }));
 }
 
@@ -290,12 +341,20 @@ function getThreadEntry(note, self) {
 
   let resolveReplies;
   let resolveInteractions;
+  const persistent = contentCache.get(`thread:${key}`);
+  const cachedReplies = Array.isArray(persistent?.replies)
+    ? persistent.replies.filter(reply => reply?.kind === 1 && typeof reply.id === 'string'
+      && typeof reply.pubkey === 'string' && typeof reply.content === 'string' && Number.isSafeInteger(reply.created_at))
+    : null;
+  const cachedPeople = persistent?.interactions;
+  const validInteractions = cachedPeople && ['reposts', 'quotes', 'likes'].every(type => Array.isArray(cachedPeople[type]))
+    ? cachedPeople : null;
   entry = {
-    replies: null,
-    repliesLoaded: false,
-    interactions: null,
-    interactionsLoaded: false,
-    loadedAt: 0,
+    replies: cachedReplies,
+    repliesLoaded: cachedReplies !== null,
+    interactions: validInteractions,
+    interactionsLoaded: validInteractions !== null,
+    loadedAt: persistent ? Date.now() : 0,
     repliesReady: new Promise(resolve => { resolveReplies = resolve; }),
     interactionsReady: new Promise(resolve => { resolveInteractions = resolve; })
   };
@@ -314,8 +373,21 @@ function getThreadEntry(note, self) {
     entry.resolveInteractions(people);
   }).then(replies => {
     entry.loadedAt = Date.now();
+    contentCache.set(`thread:${key}`, {
+      replies: entry.replies,
+      interactions: entry.interactions
+    }, THREAD_CACHE_TTL_MS);
     return replies;
   }).catch(err => {
+    if (entry.repliesLoaded) {
+      if (!entry.interactionsLoaded) {
+        entry.interactions = { reposts: [], quotes: [], likes: [] };
+        entry.interactionsLoaded = true;
+        entry.resolveInteractions(entry.interactions);
+      }
+      entry.loadedAt = Date.now();
+      return entry.replies;
+    }
     resolveReplies([]);
     entry.resolveInteractions({ reposts: [], quotes: [], likes: [] });
     if (threadCache.get(key) === entry) threadCache.delete(key);
@@ -338,5 +410,16 @@ export function loadThread(note, self, onReplies = () => {}, onInteractions = ()
 }
 
 export function refreshThread(note, self, onReplies = () => {}, onInteractions = () => {}) {
-  return fetchThread(note, self, onReplies, onInteractions);
+  let replies = [];
+  let interactions = null;
+  return fetchThread(note, self, value => {
+    replies = value;
+    onReplies(value);
+  }, value => {
+    interactions = value;
+    onInteractions(value);
+  }).then(result => {
+    contentCache.set(`thread:${note.id}:${self || ''}`, { replies, interactions }, THREAD_CACHE_TTL_MS);
+    return result;
+  });
 }
