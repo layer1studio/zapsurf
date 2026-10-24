@@ -18,6 +18,7 @@ import { selectNewNotes } from './live-updates.mjs';
 import { fetchNotificationActivity } from './notification-service.js';
 import { mergeNotifications, notificationSince } from './notifications.mjs';
 import { createUserActivityLoader } from './user-activity-service.js';
+import { filterActivity } from './user-activity.mjs';
 
 const SORT_KEY = 'zs-sort';
 const stat = key => item => statsFor(item.note.id)[key];
@@ -353,20 +354,48 @@ async function showProfileActivity(pubkey, { updateHistory = true } = {}) {
 
   const identity = el('div', { class: 'activity-identity' }, activityAccount(pubkey));
   const rows = el('div', { class: 'activity-list', 'aria-label': 'Activity' });
+  const filterTypes = [
+    ['all', 'All'], ['post', 'Posts'], ['reply', 'Replies'], ['like', 'Likes'],
+    ['repost', 'Reposts'], ['zap', 'Zaps'], ['follow', 'Follows']
+  ];
+  let activeFilter = 'all';
+  const filters = el('div', { class: 'activity-filters', role: 'group', 'aria-label': 'Filter activity' },
+    ...filterTypes.map(([type, label]) => el('button', {
+      type: 'button', class: 'activity-filter', 'aria-pressed': String(type === activeFilter),
+      onclick: () => {
+        activeFilter = type;
+        for (const button of filters.children) button.setAttribute('aria-pressed', String(button.dataset.type === activeFilter));
+        renderItems();
+      }
+    }, label)));
+  [...filters.children].forEach((button, index) => { button.dataset.type = filterTypes[index][0]; });
   const status = el('p', { class: 'replies-status', role: 'status' });
   const warnings = el('div', { class: 'activity-warnings' });
   const controls = el('div', { class: 'activity-controls' });
   const back = viewLink(profilePath(pubkey, nip19), () => showProfile(pubkey), 'Back to profile');
   back.classList.add('back-link');
   mainEl.replaceChildren(el('section', { class: 'note activity-page' },
-    back, el('h1', { class: 'activity-title' }, 'All Activity'), identity, warnings, rows, status, controls));
+    back, el('h1', { class: 'activity-title' }, 'All Activity'), identity, filters, warnings, rows, status, controls));
   mainEl.parentElement.scrollTop = 0;
 
   let loader = null;
   let busy = false;
   let items = [];
+  let pageState = { exhausted: false, blocked: false };
   const targets = new Map();
   const current = () => token === profileToken && activityRoute === routeToken;
+  function renderItems() {
+    const visible = filterActivity(items, activeFilter);
+    rows.replaceChildren(...(visible.length
+      ? visible.map(item => activityItem(item, targets))
+      : items.length ? [el('p', { class: 'replies-status' }, `No ${filterTypes.find(([type]) => type === activeFilter)[1].toLowerCase()} in the loaded activity.`)] : []));
+    if (!busy && items.length) {
+      const pagination = pageState.blocked
+        ? ' Older activity could not be loaded without skipping events.'
+        : pageState.exhausted ? ' End of available activity.' : '';
+      status.textContent = `${visible.length} shown; ${items.length} ${items.length === 1 ? 'activity' : 'activities'} loaded.${pagination}`;
+    }
+  }
   const load = async (retry = false) => {
     if (busy || !current()) return;
     busy = true;
@@ -381,16 +410,17 @@ async function showProfileActivity(pubkey, { updateHistory = true } = {}) {
       const page = await loader.next();
       if (!current()) return;
       items = page.items;
+      pageState = page;
       for (const [id, note] of page.targets) targets.set(id, note);
       identity.replaceChildren(activityAccount(pubkey));
-      rows.replaceChildren(...items.map(item => activityItem(item, targets)));
+      renderItems();
       warnings.replaceChildren(
         ...(page.partial ? [el('p', { class: 'replies-status' }, 'Some relays are unavailable. Showing available activity.')] : []),
         ...(page.followHistoryLimited ? [el('p', { class: 'replies-status' }, 'New-follow history unavailable: older follow lists were not found.')] : []));
       status.textContent = page.blocked
         ? 'A relay response limit was reached. Older activity could not be loaded without skipping events.'
         : page.exhausted ? items.length ? 'End of available activity.' : 'No activity found on available relays.'
-          : `${items.length} ${items.length === 1 ? 'activity' : 'activities'} loaded.`;
+          : `${filterActivity(items, activeFilter).length} shown; ${items.length} ${items.length === 1 ? 'activity' : 'activities'} loaded.`;
       if (!page.exhausted && !page.blocked) controls.append(el('button', { type: 'button', class: 'button secondary', onclick: () => load() }, 'Load more'));
       if (page.partial || page.blocked) controls.append(el('button', { type: 'button', class: 'link-button', onclick: () => load(true) }, 'Retry relays'));
     } catch (error) {

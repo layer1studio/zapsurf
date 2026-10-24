@@ -9,6 +9,10 @@ export function mergeActivity(current, incoming) {
   return [...new Map([...current, ...incoming].map(item => [item.id, item])).values()].sort(compare);
 }
 
+export function filterActivity(items, type = 'all') {
+  return type === 'all' ? items : items.filter(item => item.type === type);
+}
+
 export function classifyUserActivity(events, pubkey, validatedZaps = new Map()) {
   const items = [];
   for (const event of events) {

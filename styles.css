@@ -656,6 +656,10 @@ a:focus-visible {
 .profile-navigation { margin-bottom: 24px; }
 .activity-title { margin: 0 0 12px; font-size: 24px; letter-spacing: 0; }
 .activity-identity { margin-bottom: 24px; }
+.activity-filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 16px; }
+.activity-filter { min-height: 36px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--muted); font: inherit; cursor: pointer; }
+.activity-filter:hover { color: var(--text); border-color: var(--accent); }
+.activity-filter[aria-pressed="true"] { background: var(--accent-soft); color: var(--text); border-color: var(--accent); }
 .activity-item { padding: 22px 0; border-top: 1px solid var(--border); min-width: 0; }
 .activity-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 14px; }
 .activity-heading strong { color: var(--accent); font-size: 14px; overflow-wrap: anywhere; }

@@ -6,6 +6,7 @@
 - Show target-post details, reply-parent context, zap amounts and comments, and followed profiles, with unavailable-target fallbacks and paginated older activity.
 - Infer new follows from available historical contact lists without inventing follow dates when older snapshots are missing; handle partial relay failures with retry controls.
 - Add profile activity routes and Vercel deep-link rewrites, plus focused tests for activity classification, follow history, pagination, routing, and zap target validation.
+- Add All Activity filters for posts, replies, likes, reposts, zaps, and follows without resetting loaded history or pagination.
 
 ## 0.5.7 - 2026-10-23
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyUserActivity, createActivityPager, followActivity, mergeActivity } from '../js/user-activity.mjs';
+import { classifyUserActivity, createActivityPager, filterActivity, followActivity, mergeActivity } from '../js/user-activity.mjs';
 
 const pubkey = 'a'.repeat(64);
 const parent = 'b'.repeat(64);
@@ -60,6 +60,18 @@ test('follows require a baseline and emit additions, not removals or existing co
 test('merge deduplicates source IDs, not posts targeted by multiple actions', () => {
   const items = classifyUserActivity([event('one', 7, [['e', parent]]), event('two', 6, [['e', parent]])], pubkey);
   assert.equal(mergeActivity(items, items).length, 2);
+});
+
+test('activity filters select one type without mutating loaded history', () => {
+  const items = classifyUserActivity([
+    event('post', 1), event('reply', 1, [['e', parent, '', 'reply']]),
+    event('like', 7, [['e', parent]]), event('repost', 6, [['e', parent]])
+  ], pubkey);
+  const likes = filterActivity(items, 'like');
+  assert.deepEqual(likes.map(item => item.id), ['like']);
+  assert.equal(filterActivity(items, 'all'), items);
+  assert.equal(items.length, 4);
+  assert.deepEqual(filterActivity(items, 'zap'), []);
 });
 
 test('equal-time replaceable follow lists use the lowest ID without inventing an order', () => {
