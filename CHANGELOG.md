@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 - 2026-10-24
 
 - Add a responsive one-to-one DM inbox with NIP-17 messages, NIP-44 encryption, NIP-59 gift wrapping, sender history copies, authenticated inbox relays, retry controls, and older-message loading.
 - Discover and configure kind-10050 DM inbox relays, support extension, remote, and encrypted-local-key signers, and keep decrypted messages and drafts out of persistent storage.
@@ -11,9 +11,6 @@
 - Render quoted notes inline with bounded nesting, media, link previews, and unavailable-note fallbacks.
 - Show approximate profile follower counts with cached relay queries and an explanation of relay-coverage limits; load notification author profiles before rendering activity.
 - Preserve spaces after selected mentions and refine emoji picker layout, with regression tests for uploads, quote references, follower counts, and composer text.
-
-## 0.6.0 - 2026-10-24
-
 - Add an All Activity link to profiles, opening a shareable timeline of original posts, replies, likes and reactions, reposts, verified sent zaps, and new follows.
 - Show target-post details, reply-parent context, zap amounts and comments, and followed profiles, with unavailable-target fallbacks and paginated older activity.
 - Infer new follows from available historical contact lists without inventing follow dates when older snapshots are missing; handle partial relay failures with retry controls.
