@@ -13,7 +13,7 @@ import { openLoginDialog } from './login.js';
 import { openSettings } from './settings.js';
 import { el, isDirectReplyTo, isReply, now, store, formatSats, safeHttpUrl } from './util.js';
 import { buildReplyTree } from './reply-tree.mjs';
-import { notePath, parseViewPath, profilePath, profileActivityPath } from './view-routes.mjs';
+import { notePath, parseViewPath, profilePath, profileActivityPath, shouldBackToFeed } from './view-routes.mjs';
 import { filterHomeItems, selectNewNotes } from './live-updates.mjs';
 import { fetchNotificationActivity } from './notification-service.js';
 import { mergeNotifications, notificationSince } from './notifications.mjs';
@@ -284,6 +284,10 @@ function profileData(pubkey) {
 
 function backToNote() {
   if (!currentItem) return;
+  if (shouldBackToFeed(currentItem.note.id, shownNoteId)) {
+    loadFeed(feedSelect.value);
+    return;
+  }
   const button = [...listEl.querySelectorAll('.note-item')].find(b => b.dataset.noteId === currentItem.note.id);
   showNote(currentItem, button);
 }
@@ -1392,6 +1396,13 @@ function renderNotificationList() {
       role: 'listitem',
       onclick: () => {
         notificationsDialog.close();
+        const note = item.targetId === item.event.id
+          ? item.event
+          : notificationState.ownNotes.find(candidate => candidate.id === item.targetId);
+        if (note?.kind === 1) {
+          showNote({ note, zaps: cachedZapCount(note.pubkey) });
+          return;
+        }
         updatePath(notePath(item.targetId, nip19));
         restoreLocation();
       }

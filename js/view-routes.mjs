@@ -32,3 +32,7 @@ export function profileActivityPath(pubkey, nip19) {
 export function notePath(noteId, nip19) {
   return `/${encodeURIComponent(nip19.noteEncode(noteId))}`;
 }
+
+export function shouldBackToFeed(currentNoteId, shownNoteId) {
+  return Boolean(currentNoteId && currentNoteId === shownNoteId);
+}

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { notePath, parseViewPath, profilePath, profileActivityPath } from '../js/view-routes.mjs';
+import { notePath, parseViewPath, profilePath, profileActivityPath, shouldBackToFeed } from '../js/view-routes.mjs';
 
 const pubkey = 'a'.repeat(64);
 const noteId = 'b'.repeat(64);
@@ -32,6 +32,12 @@ test('parses profile and note routes with supported NIP-19 entities', () => {
 test('formats profile and note paths using NIP-19 identifiers', () => {
   assert.equal(profilePath(pubkey, nip19), '/npub-user');
   assert.equal(notePath(noteId, nip19), '/note-event');
+});
+
+test('backs to the feed when the current note is its own return target', () => {
+  assert.equal(shouldBackToFeed(noteId, noteId), true);
+  assert.equal(shouldBackToFeed(noteId, null), false);
+  assert.equal(shouldBackToFeed(noteId, 'c'.repeat(64)), false);
 });
 
 test('rejects malformed paths, incompatible entities, and non-note events', () => {
