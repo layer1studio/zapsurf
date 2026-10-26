@@ -83,13 +83,18 @@ export async function postNote(rawContent, { replyTo = null, quote = null, onPro
   return event;
 }
 
-export async function likeNote(note) {
+export async function likeNote(note, reaction = '+') {
+  const content = reaction.trim();
+  if (!content) throw new Error('Choose a reaction first.');
   const actions = actionsFor(note.id);
-  if (actions.liked) return;
-  await publish({ kind: 7, content: '+', tags: [['e', note.id], ['p', note.pubkey], ['k', String(note.kind)]] });
-  actions.liked = true;
-  statsFor(note.id).likes++;
+  if (content === '+' && actions.liked) return;
+  const event = await publish({ kind: 7, content, tags: [['e', note.id], ['p', note.pubkey], ['k', String(note.kind)]] });
+  if (content !== '-') {
+    actions.liked = true;
+    statsFor(note.id).likes++;
+  }
   emit('zs:stats', note.id);
+  return event;
 }
 
 export async function repostNote(note) {

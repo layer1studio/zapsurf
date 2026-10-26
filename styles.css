@@ -157,7 +157,7 @@ body.sidebar-hidden .main { padding-top: 72px; }
   position: fixed;
   top: 50%;
   right: 12px;
-  left: 12px;
+  left: 372px;
   z-index: 40;
   display: flex;
   align-items: center;
@@ -166,6 +166,7 @@ body.sidebar-hidden .main { padding-top: 72px; }
   pointer-events: none;
 }
 
+body.sidebar-hidden .note-navigation { left: 12px; }
 .note-navigation[hidden] { display: none; }
 
 .note-navigation-button {
@@ -514,6 +515,30 @@ a:focus-visible {
   white-space: nowrap;
 }
 
+.profile-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+}
+.profile-badges[hidden] { display: none; }
+.profile-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  min-height: 40px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 13px;
+}
+.profile-badge:hover, .profile-badge:focus-visible { border-color: var(--accent); }
+.profile-badge span { min-width: 0; overflow-wrap: anywhere; }
+.profile-badge-image { width: 32px; height: 32px; flex: none; object-fit: contain; }
+
 .main-pane {
   display: flex;
   flex-direction: column;
@@ -573,6 +598,17 @@ a:focus-visible {
   max-height: 520px;
   margin: 12px 0;
   border-radius: 10px;
+}
+
+.youtube-embed {
+  display: block;
+  width: min(100%, 560px);
+  aspect-ratio: 16 / 9;
+  height: auto;
+  margin: 12px 0;
+  border: 0;
+  border-radius: 8px;
+  background: #000;
 }
 
 .link-preview {
@@ -1139,7 +1175,22 @@ a:focus-visible {
 
 .action:hover { background: var(--panel-hover); color: var(--text); }
 .action.active { color: var(--accent); border-color: rgba(247, 165, 49, 0.35); }
+.action[aria-label="Like"] { border-color: transparent; }
 .action:disabled { opacity: 0.5; cursor: wait; }
+
+.reaction-form { display: grid; gap: 12px; }
+.reaction-modal .emoji-picker.is-open { max-height: 240px; }
+
+.nip05-badge { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 16px; width: 16px; height: 16px; color: #5fd9bd; font-size: 14px; font-weight: 700; }
+.nip05-badge[hidden] { display: none; }
+
+.note-reactions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; max-width: 100%; }
+.note-reactions[hidden] { display: none; }
+.note-reaction { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 5px 7px; background: transparent; color: var(--muted); border: 0; border-radius: 6px; font: inherit; font-size: 13px; cursor: pointer; }
+.note-reaction:hover { background: var(--panel-hover); color: var(--text); }
+.note-reaction[aria-pressed="true"] { color: var(--accent); }
+.note-reaction:disabled { opacity: 0.5; cursor: wait; }
+.note-reaction-content { min-width: 0; overflow-wrap: anywhere; }
 
 .interaction-dropdown { width: 100%; }
 

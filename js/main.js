@@ -1,9 +1,9 @@
 import { pool, PROFILE_RELAYS, rememberProfile, profiles, parseProfile, ensureProfile, settings, MAX_MIN_ZAP_SATS, statsFor, actionsFor } from './state.js';
 import { FEEDS, DEFAULT_FEED_ID, loadTrendingItems } from './primal.js';
-import { loadHomeItems, loadThread as fetchThread, prefetchThread, ensureProfiles, loadNoteStats, refreshNoteStats, pollRecentNotes, refreshThread, loadProfileNotes, getCachedProfileNotes, refreshProfileNotes, loadNoteEvent, fetchContactList, fetchFollowerCount } from './notes.js?v=0.4.0';
+import { loadHomeItems, loadThread as fetchThread, prefetchThread, ensureProfiles, loadNoteStats, refreshNoteStats, pollRecentNotes, refreshThread, loadProfileNotes, getCachedProfileNotes, refreshProfileNotes, loadNoteEvent, fetchContactList, fetchFollowerCount, getFollows } from './notes.js';
 import { countRecentZapsSent, loadNoteZaps as fetchNoteZaps, cachedZapCount, cachedZapSats, cacheZapSummary, hasCachedZapSummary } from './zapcount.js';
 import { getSession, canSign, isOwn, logout, LOGIN_METHODS } from './signer.js';
-import { avatar, authorLine, badge, repostLine, renderContent, timeEl } from './render.js';
+import { avatar, authorLine, badge, profileBadges, repostLine, renderContent, timeEl } from './render.js';
 import { actionBar, requireSigner } from './actions.js?v=0.2.0';
 import { isFollowing, setFollowing } from './social.js';
 import { toast } from './dialogs.js';
@@ -14,13 +14,15 @@ import { openSettings } from './settings.js';
 import { el, isDirectReplyTo, isReply, now, store, formatSats, safeHttpUrl } from './util.js';
 import { buildReplyTree } from './reply-tree.mjs';
 import { notePath, parseViewPath, profilePath, profileActivityPath } from './view-routes.mjs';
-import { selectNewNotes } from './live-updates.mjs';
+import { filterHomeItems, selectNewNotes } from './live-updates.mjs';
 import { fetchNotificationActivity } from './notification-service.js';
 import { mergeNotifications, notificationSince } from './notifications.mjs';
 import { createUserActivityLoader, getCachedUserActivity } from './user-activity-service.js';
 import { filterActivity, mergeActivity } from './user-activity.mjs';
 import { contentCache } from './cache.mjs';
 import { messageButton } from './messages-ui.js';
+import { groupReactions, mergeReactionGroups } from './reaction-groups.mjs';
+import { likeNote } from './publish.js';
 
 const SORT_KEY = 'zs-sort';
 const stat = key => item => statsFor(item.note.id)[key];
@@ -253,6 +255,18 @@ document.addEventListener('zs:follows', ({ detail }) => {
   for (const button of document.querySelectorAll('.follow-button')) {
     if (button.dataset.pubkey === detail.pubkey) setFollowState(button, detail.following);
   }
+  const session = getSession();
+  if (!session) return;
+  contentCache.remove(feedSnapshotKey(HOME_FEED.id, session.pubkey));
+  if (feedSelect.value === HOME_FEED.id && !profileOpen) {
+    loadFeed(HOME_FEED.id, { updateHistory: false });
+  } else if (lastResult?.isHome && !detail.following) {
+    const keep = item => (item.repostedBy || item.note.pubkey) !== detail.pubkey;
+    lastResult.items = lastResult.items.filter(keep);
+    lastResult.pendingNewNotes = lastResult.pendingNewNotes.filter(keep);
+    applyFilter();
+    updateNewFeedNotesButton();
+  }
 });
 
 document.addEventListener('zs:open-note', ({ detail: note }) => {
@@ -333,10 +347,11 @@ async function showProfile(pubkey, { updateHistory = true } = {}) {
       el('header', { class: 'note-header profile-header' },
         avatar(pubkey, 'large'),
         el('div', { class: 'note-meta' },
-          el('div', { class: 'author-line' }, el('span', { class: 'author-name' }, profile.name), badge(zaps, cachedZapSats(pubkey))),
+          authorLine(pubkey, zaps),
           typeof data.nip05 === 'string' && data.nip05 ? el('div', { class: 'note-time' }, data.nip05) : null),
         el('div', { class: 'profile-actions' }, canSign() && !isOwn(pubkey) ? messageButton(pubkey) : null, followButton(pubkey))),
       typeof data.about === 'string' && data.about ? renderContent(data.about, 'note-content profile-about', { quotes: false }) : null,
+      profileBadges(pubkey),
       el('dl', { class: 'profile-meta' },
         website ? [el('dt', {}, 'Website'), el('dd', {}, el('a', { href: website, target: '_blank', rel: 'noopener noreferrer' }, website))] : null,
         profile.lud16 ? [el('dt', {}, 'Lightning'), el('dd', {}, profile.lud16)] : null,
@@ -676,7 +691,11 @@ async function loadNoteZaps(note, container, quiet = false) {
   }
 }
 
-function createInteractionDropdown() {
+function createInteractionDropdown(note) {
+  const reactions = el('span', { class: 'note-reactions', role: 'group', 'aria-label': 'Reactions', hidden: true });
+  const localReactions = [];
+  const pendingReactions = new Set();
+  let currentPeople = { reposts: [], quotes: [], likes: [], reactions: [] };
   const panel = el('div', { class: 'interaction-panel' }, el('p', { class: 'replies-status busy' }, 'Loading people…'));
   const dropdown = el('details', { class: 'interaction-dropdown' },
     el('summary', { class: 'action interaction-toggle' }, el('span', { 'aria-hidden': 'true' }, '👥'), 'People'),
@@ -694,11 +713,47 @@ function createInteractionDropdown() {
       : el('p', { class: 'interaction-empty' }, 'No one yet.'));
   return {
     element: dropdown,
+    reactions,
+    addReaction(event) {
+      localReactions.push(event);
+      this.render(currentPeople);
+    },
     render(people) {
+      currentPeople = people;
+      const groups = mergeReactionGroups(people.reactions || [], groupReactions(localReactions, note.id));
+      const otherReactions = groups.filter(reaction => reaction.content !== '\u2764\uFE0F');
+      reactions.hidden = otherReactions.length === 0;
+      reactions.replaceChildren(...otherReactions.map(reaction => {
+        const label = reaction.content === '-' ? '\u{1F44E}' : reaction.content;
+        const names = reaction.pubkeys.map(pubkey => parseProfile(pubkey).name).join(', ');
+        const reacted = reaction.pubkeys.includes(getSession()?.pubkey);
+        return el('button', {
+          type: 'button', class: 'note-reaction', title: `${reacted ? 'Reacted' : 'React'} ${label}: ${names}`,
+          'aria-label': `React ${label}: ${reaction.pubkeys.length} reactions`, 'aria-pressed': String(reacted),
+          disabled: pendingReactions.has(reaction.content),
+          onclick: async event => {
+            if (!requireSigner() || reacted || pendingReactions.has(reaction.content)) return;
+            pendingReactions.add(reaction.content);
+            event.currentTarget.disabled = true;
+            try {
+              const published = await likeNote(note, reaction.content);
+              if (published && !localReactions.some(local => local.id === published.id)) localReactions.push(published);
+            } catch (err) {
+              if (err?.message !== 'Unlock cancelled') toast(err.message || String(err), 'error');
+            } finally {
+              pendingReactions.delete(reaction.content);
+              this.render(currentPeople);
+            }
+          }
+        },
+          el('span', { class: 'note-reaction-content' }, label),
+          el('span', { class: 'action-count' }, String(reaction.pubkeys.length)));
+      }));
       panel.replaceChildren(
         group('Reposted by', people.reposts),
         group('Quoted by', people.quotes),
-        group('Liked by', people.likes));
+        group('Liked by', groups.find(reaction => reaction.content === '\u2764\uFE0F')?.pubkeys || []),
+        ...otherReactions.map(reaction => group(`Reacted ${reaction.content === '-' ? '\u{1F44E}' : reaction.content}`, reaction.pubkeys)));
     }
   };
 }
@@ -754,7 +809,7 @@ function showNote(item, button = null, { updateHistory = true } = {}) {
   const clientName = note.tags?.find(tag => tag[0] === 'client')?.[1];
   const zapsEl = el('section', { class: 'note-zaps' }, el('p', { class: 'replies-status busy' }, 'Loading zaps…'));
   const repliesEl = el('section', { class: 'replies' });
-  const interactionDropdown = createInteractionDropdown();
+  const interactionDropdown = createInteractionDropdown(note);
   const replyBox = canSign()
     ? inlineReplyBox(note)
     : el('p', { class: 'replies-status' }, getSession() ? 'Read-only: log in with a signer to reply.' : el('button', { type: 'button', class: 'link-button', onclick: openLoginDialog }, 'Log in to reply'));
@@ -770,7 +825,7 @@ function showNote(item, button = null, { updateHistory = true } = {}) {
       el('div', { class: 'profile-actions' }, followButton(note.pubkey))),
     renderContent(note.content, 'note-content', { linkPreviews: true, event: note }),
     el('div', { class: 'note-toolbar' },
-      actionBar(note, { onReply: focusReply }),
+      actionBar(note, { onReply: focusReply, reactions: interactionDropdown.reactions }),
       interactionDropdown.element),
     zapsEl,
     replyBox,
@@ -779,7 +834,10 @@ function showNote(item, button = null, { updateHistory = true } = {}) {
   mainEl.parentElement.scrollTop = 0;
   loadNoteZaps(note, zapsEl);
   loadThread(note, repliesEl, interactionDropdown);
-  if (openThread?.noteId === note.id) openThread.zapsContainer = zapsEl;
+  if (openThread?.noteId === note.id) {
+    openThread.zapsContainer = zapsEl;
+    openThread.addReaction = event => interactionDropdown.addReaction(event);
+  }
 }
 
 // ---------- Feed list ----------
@@ -843,12 +901,16 @@ async function insertNewFeedNotes() {
       countRecentZapsSent(pubkeys)
     ]);
     await loadNoteStats(pending.map(item => item.note), getSession()?.pubkey);
+    const session = getSession();
+    const eligible = result.isHome && session
+      ? filterHomeItems(pending, await getFollows(session.pubkey), session.pubkey)
+      : pending;
     if (result !== lastResult) return;
     for (const item of pending) {
       item.zaps = counts.get(item.note.pubkey) || 0;
       item.hasStats = true;
     }
-    result.items.unshift(...pending);
+    result.items.unshift(...eligible);
     persistFeedSnapshot(result, feedSelect.value, getSession()?.pubkey);
     const scrollTop = listEl.scrollTop;
     applyFilter();
@@ -887,7 +949,7 @@ function renderList(items, emptyMessage) {
     const button = selected || listEl.querySelector('.note-item');
     const item = items.find(candidate => candidate.note.id === button.dataset.noteId);
     if (item) showNote(item, button, { updateHistory: false });
-  } else {
+  } else if (!profileOpen) {
     shownNoteId = null;
     mainEl.replaceChildren(el('p', { class: 'empty' }, emptyMessage));
   }
@@ -963,11 +1025,13 @@ async function loadMore() {
         ? `Older notes: loading zap receipts for ${total} authors…`
         : `Older notes: checking zap history ${done}/${total}…`;
     });
+    const session = getSession();
+    const eligible = session ? filterHomeItems(fresh, await getFollows(session.pubkey), session.pubkey) : [];
     if (result !== lastResult) return;
     for (const item of fresh) item.zaps = counts.get(item.note.pubkey);
-    result.items.push(...fresh);
+    result.items.push(...eligible);
     result.cursor = page.cursor;
-    result.emptyPages = fresh.length ? 0 : (result.emptyPages || 0) + 1;
+    result.emptyPages = eligible.length ? 0 : (result.emptyPages || 0) + 1;
     result.exhausted = result.emptyPages >= MAX_EMPTY_PAGES || result.cursor < now() - HOME_MAX_AGE_DAYS * 86400;
     persistFeedSnapshot(result, HOME_FEED.id, getSession()?.pubkey);
   } catch (err) {
@@ -1060,10 +1124,15 @@ async function pollLiveUpdates() {
   liveRefreshBusy = true;
   const pollStartedAt = now();
   const visible = visibleMenuItems(result);
-  const authors = result && !result.loading && !document.body.classList.contains('sidebar-hidden')
+  let authors = result && !result.loading && !document.body.classList.contains('sidebar-hidden')
     ? [...new Set(result.items.map(item => item.note.pubkey))]
     : [];
   try {
+    const session = getSession();
+    if (result?.isHome && session) {
+      const follows = await getFollows(session.pubkey);
+      authors = authors.filter(author => author === session.pubkey || follows.has(author));
+    }
     let events = [];
     let feedPollSucceeded = !authors.length;
     if (authors.length) {
@@ -1073,13 +1142,14 @@ async function pollLiveUpdates() {
       } catch { /* Keep the old cursor so the next poll retries the gap. */ }
     }
     if (visible.length) await refreshNoteStats(visible.map(item => item.note), getSession()?.pubkey);
+    const follows = result?.isHome && session ? await getFollows(session.pubkey) : null;
     if (result === lastResult && result && !result.loading) {
       const knownIds = new Set([...result.items, ...result.pendingNewNotes].map(item => item.note.id));
       const room = MAX_PENDING_FEED_NOTES - result.pendingNewNotes.length;
       const additions = selectNewNotes(events, knownIds, isReply)
         .slice(0, Math.max(0, room))
         .map(note => ({ note }));
-      result.pendingNewNotes.unshift(...additions);
+      result.pendingNewNotes.unshift(...(follows ? filterHomeItems(additions, follows, session.pubkey) : additions));
       updateNewFeedNotesButton(result);
       if (visible.length) renderRefreshedMenuStats(visible);
       if (authors.length && feedPollSucceeded) lastLivePollAt = pollStartedAt;
@@ -1131,7 +1201,13 @@ async function loadFeed(feedId, { updateHistory = true, notice = '' } = {}) {
   const isHome = Boolean(feedId === HOME_FEED.id && session);
   const found = FEEDS.find(f => f.id === feedId && (session || !f.personal));
   const feed = isHome ? HOME_FEED : found || FEEDS.find(f => f.id === DEFAULT_FEED_ID);
-  const cachedResult = restoreFeedSnapshot(feed.id, session?.pubkey, isHome);
+  let cachedResult = restoreFeedSnapshot(feed.id, session?.pubkey, isHome);
+  if (isHome && cachedResult) {
+    const follows = await getFollows(session.pubkey);
+    if (token !== loadToken) return;
+    cachedResult.items = filterHomeItems(cachedResult.items, follows, session.pubkey);
+    if (!cachedResult.items.length) cachedResult = null;
+  }
   if (cachedResult) cachedResult.loading = true;
   lastResult = cachedResult;
   selectedNoteId = null;
@@ -1173,6 +1249,10 @@ async function loadFeed(feedId, { updateHistory = true, notice = '' } = {}) {
     if (isHome && cachedResult) {
       items = mergeFeedItems(items, cachedResult.items);
       if (Number.isFinite(cachedResult.cursor)) cursor = Number.isFinite(cursor) ? Math.min(cursor, cachedResult.cursor) : cachedResult.cursor;
+    }
+    if (isHome) {
+      items = filterHomeItems(items, await getFollows(session.pubkey), session.pubkey);
+      if (token !== loadToken) return;
     }
     const authors = [...new Set(items.map(item => item.note.pubkey))];
     const result = {
@@ -1526,6 +1606,10 @@ document.addEventListener('zs:session', () => {
 document.addEventListener('zs:need-login', openLoginDialog);
 
 document.addEventListener('zs:published', ({ detail: event }) => {
+  if (event.kind === 7) {
+    if (event.tags.filter(tag => tag[0] === 'e').at(-1)?.[1] === openThread?.noteId) openThread.addReaction?.(event);
+    return;
+  }
   if (event.kind !== 1) return;
   const parentId = replyParentId(event);
   const isThreadReply = openThread?.replies && (parentId === openThread.noteId
@@ -1587,7 +1671,7 @@ const sidebarHide = document.getElementById('sidebar-hide');
 function updateNoteNavigation() {
   const buttons = [...listEl.querySelectorAll('.note-item')];
   const index = buttons.findIndex(button => button.dataset.noteId === shownNoteId);
-  const available = document.body.classList.contains('sidebar-hidden') && !profileOpen && index !== -1;
+  const available = !profileOpen && index !== -1;
   noteNavigation.hidden = !available;
   previousNoteButton.disabled = !available || index === 0;
   nextNoteButton.disabled = !available || index === buttons.length - 1;

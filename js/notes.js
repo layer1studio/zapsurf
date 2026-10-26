@@ -1,9 +1,11 @@
-import { nip57, nip10 } from './deps.js';
+import { nip57, nip10, verifyEvent } from './deps.js';
 import { pool, PROFILE_RELAYS, DEFAULT_RELAYS, profiles, rememberProfile, statsFor, actionsFor } from './state.js';
 import { fetchRelayLists, getWriteRelays, planOutbox, uniqueRelays } from './relays.js';
 import { chunk, now, isReply, isDirectReplyTo, emit } from './util.js';
 import { contentCache } from './cache.mjs';
 import { createFollowerCountLoader, FOLLOWER_COUNT_CACHE_MS } from './follower-count.mjs';
+import { createProfileBadgeLoader } from './profile-badges.mjs';
+import { groupReactions } from './reaction-groups.mjs';
 
 const HOME_WINDOW_HOURS = 48;
 const HOME_LIMIT = 150;
@@ -14,6 +16,13 @@ const MAX_THREAD_REPLIES = 500;
 const PROFILE_NOTES_CACHE_MS = 6 * 60 * 60 * 1000;
 const NOTE_EVENT_CACHE_MS = 30 * 24 * 60 * 60 * 1000;
 const NOTE_STATS_CACHE_MS = 2 * 60 * 60 * 1000;
+
+export const loadProfileBadges = createProfileBadgeLoader({
+  verifyEvent,
+  relaysFor: async pubkey => uniqueRelays(PROFILE_RELAYS, await getWriteRelays(pubkey)),
+  query: async (relays, filters) => (await Promise.all(filters.map(filter =>
+    pool.querySync(relays, filter, { maxWait: QUERY_WAIT_MS })))).flat()
+});
 
 function newest(events) {
   return events.reduce((best, ev) => (!best || ev.created_at > best.created_at ? ev : best), null);
@@ -304,7 +313,8 @@ function interactionPeople(events, noteId) {
     reposts: peopleByAuthor(events.filter(event => [6, 16].includes(event.kind) && references(event))),
     quotes: peopleByAuthor(events.filter(event => event.kind === 1 && event.tags?.some(tag =>
       (tag[0] === 'q' && tag[1] === noteId) || (tag[0] === 'e' && tag[1] === noteId && tag[3] === 'mention')))),
-    likes: peopleByAuthor(events.filter(event => event.kind === 7 && event.content !== '-' && references(event)))
+    likes: peopleByAuthor(events.filter(event => event.kind === 7 && event.content !== '-' && references(event))),
+    reactions: groupReactions(events, noteId)
   };
 }
 
@@ -350,7 +360,8 @@ async function fetchThread(note, self, onReplies, onInteractions) {
   }
   allReplies.sort((a, b) => a.created_at - b.created_at);
   onReplies(allReplies);
-  await ensureProfiles([...allReplies.map(reply => reply.pubkey), ...people.reposts, ...people.quotes, ...people.likes]);
+  await ensureProfiles([...allReplies.map(reply => reply.pubkey), ...people.reposts, ...people.quotes, ...people.likes,
+    ...people.reactions.flatMap(reaction => reaction.pubkeys)]);
   onInteractions(people);
   return allReplies;
 }
@@ -373,7 +384,7 @@ function getThreadEntry(note, self) {
       && typeof reply.pubkey === 'string' && typeof reply.content === 'string' && Number.isSafeInteger(reply.created_at))
     : null;
   const cachedPeople = persistent?.interactions;
-  const validInteractions = cachedPeople && ['reposts', 'quotes', 'likes'].every(type => Array.isArray(cachedPeople[type]))
+  const validInteractions = cachedPeople && ['reposts', 'quotes', 'likes', 'reactions'].every(type => Array.isArray(cachedPeople[type]))
     ? cachedPeople : null;
   entry = {
     replies: cachedReplies,
@@ -407,7 +418,7 @@ function getThreadEntry(note, self) {
   }).catch(err => {
     if (entry.repliesLoaded) {
       if (!entry.interactionsLoaded) {
-        entry.interactions = { reposts: [], quotes: [], likes: [] };
+        entry.interactions = { reposts: [], quotes: [], likes: [], reactions: [] };
         entry.interactionsLoaded = true;
         entry.resolveInteractions(entry.interactions);
       }
@@ -415,7 +426,7 @@ function getThreadEntry(note, self) {
       return entry.replies;
     }
     resolveReplies([]);
-    entry.resolveInteractions({ reposts: [], quotes: [], likes: [] });
+    entry.resolveInteractions({ reposts: [], quotes: [], likes: [], reactions: [] });
     if (threadCache.get(key) === entry) threadCache.delete(key);
     throw err;
   });

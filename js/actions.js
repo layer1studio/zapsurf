@@ -2,7 +2,7 @@ import { statsFor, actionsFor, settings } from './state.js';
 import { getSession, canSign } from './signer.js';
 import { likeNote, repostNote } from './publish.js';
 import { zapNote, openZapDialog } from './zaps.js';
-import { openComposer } from './compose.js';
+import { openComposer, createEmojiPicker } from './compose.js';
 import { el, emit, formatSats } from './util.js';
 import { toast } from './dialogs.js';
 
@@ -49,6 +49,42 @@ async function runAction(button, task, success) {
   } finally {
     button.disabled = false;
   }
+}
+
+function openReactionDialog(note) {
+  const input = el('input', {
+    type: 'text', required: true, maxlength: '32', 'aria-label': 'Reaction', autocomplete: 'off'
+  });
+  const submit = el('button', { type: 'submit', class: 'button primary' }, 'React');
+  const cancel = el('button', { type: 'button', class: 'icon-button', 'aria-label': 'Close', title: 'Close' }, '\u2715');
+  const picker = createEmojiPicker(input, emoji => {
+    input.value = emoji;
+    input.focus();
+  });
+  const form = el('form', { class: 'reaction-form' },
+    el('label', { class: 'field' }, 'Reaction', input), picker.toolbar,
+    el('div', { class: 'dialog-actions' }, submit));
+  const dialog = el('dialog', { class: 'modal small reaction-modal', 'aria-label': 'React to note' },
+    el('div', { class: 'dialog-header' }, el('h2', {}, 'React to note'), cancel), form);
+  cancel.addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', () => dialog.remove(), { once: true });
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    if (!requireSigner()) return;
+    const reaction = input.value.trim();
+    if (!reaction) {
+      input.focus();
+      return;
+    }
+    runAction(submit, async () => {
+      await likeNote(note, reaction);
+      dialog.close();
+    }, `Reacted ${reaction}`);
+  });
+  document.body.append(dialog);
+  dialog.showModal();
+  picker.toolbar.querySelector('.emoji-toggle').click();
+  picker.toolbar.querySelector('.emoji-search').focus();
 }
 
 function zapButton(note, rerender) {
@@ -100,7 +136,7 @@ function zapButton(note, rerender) {
   return button;
 }
 
-export function actionBar(note, { onReply } = {}) {
+export function actionBar(note, { onReply, reactions } = {}) {
   const bar = el('div', { class: 'action-bar' });
   const render = () => {
     const stats = statsFor(note.id);
@@ -127,6 +163,11 @@ export function actionBar(note, { onReply } = {}) {
           if (!requireSigner() || actions.liked) return;
           runAction(event.currentTarget, () => likeNote(note).then(render));
         }
+      }),
+      ...(reactions ? [reactions] : []),
+      actionButton({
+        icon: '\u263A', label: 'React',
+        onclick: () => { if (requireSigner()) openReactionDialog(note); }
       }),
       zapButton(note, render));
   };

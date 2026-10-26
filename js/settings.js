@@ -1,12 +1,13 @@
 import { settings, ZAP_PRESETS } from './state.js';
 import { getNwc, connectNwc, disconnectNwc, hasWebln, walletLabel } from './wallet.js';
-import { el, formatSats } from './util.js';
+import { el, formatSats, emit } from './util.js';
 import { toast, setBusy } from './dialogs.js';
 import { getSession } from './signer.js';
 import { discoverBlossomServers, getBlossomFallback, setBlossomFallback } from './blossom.js';
 
 const dialog = document.getElementById('settings-dialog');
 const defaultZapSelect = document.getElementById('default-zap');
+const showProfileBadges = document.getElementById('show-profile-badges');
 const walletStatus = document.getElementById('wallet-status');
 const nwcForm = document.getElementById('nwc-form');
 const nwcDisconnect = document.getElementById('nwc-disconnect');
@@ -44,6 +45,7 @@ defaultZapSelect.replaceChildren(
   ...ZAP_PRESETS.map(sats => el('option', { value: String(sats) }, `${formatSats(sats)} sats`)));
 
 function render() {
+  showProfileBadges.checked = settings.showProfileBadges;
   const value = String(settings.defaultZap);
   if (![...defaultZapSelect.options].some(o => o.value === value)) {
     defaultZapSelect.append(el('option', { value }, `${formatSats(settings.defaultZap)} sats`));
@@ -82,6 +84,11 @@ document.addEventListener('zs:session', () => { if (dialog.open) renderBlossom()
 defaultZapSelect.addEventListener('change', () => {
   settings.setDefaultZap(Number(defaultZapSelect.value));
   toast(settings.defaultZap ? `One-tap zaps: ${formatSats(settings.defaultZap)} sats` : 'One-tap zaps off');
+});
+
+showProfileBadges.addEventListener('change', () => {
+  settings.setShowProfileBadges(showProfileBadges.checked);
+  emit('zs:profile-badges');
 });
 
 nwcForm.addEventListener('submit', async event => {

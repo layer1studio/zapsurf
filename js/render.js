@@ -1,9 +1,13 @@
-import { nip19 } from './deps.js';
+import { nip05, nip19 } from './deps.js';
 import { ensureProfile, parseProfile, settings } from './state.js';
 import { cachedZapSats } from './zapcount.js';
 import { el, safeHttpUrl, formatSats, emit } from './util.js';
-import { loadNoteEvent } from './notes.js';
+import { loadNoteEvent, loadProfileBadges } from './notes.js';
 import { CONTENT_TOKEN_RE, quoteReference, taggedQuotes, createQuoteContext, enterQuote } from './quote-references.mjs';
+import { youtubeEmbedUrl } from './youtube.mjs';
+import { createNip05Verifier } from './nip05.mjs';
+
+const verifyNip05 = createNip05Verifier({ queryProfile: identifier => nip05.queryProfile(identifier) });
 
 export function avatar(pubkey, size = '') {
   const profile = parseProfile(pubkey);
@@ -20,14 +24,60 @@ export function badge(count, sats = 0) {
   return el('span', { class: 'badge', title }, sats ? `⚡ ${formatSats(sats)} sats (${zaps})` : `⚡ ${zaps}`);
 }
 
+export function nip05Badge(pubkey) {
+  const identifier = parseProfile(pubkey).nip05;
+  if (!identifier) return null;
+  const label = `Verified NIP-05: ${identifier}`;
+  const node = el('span', { class: 'nip05-badge', role: 'img', 'aria-label': label, title: label, hidden: true }, '\u2713');
+  verifyNip05(identifier, pubkey).then(verified => { node.hidden = !verified; });
+  return node;
+}
+
 export function authorLine(pubkey, zaps) {
-  return el('div', { class: 'author-line' }, el('span', { class: 'author-name' }, parseProfile(pubkey).name), badge(zaps, cachedZapSats(pubkey)));
+  return el('div', { class: 'author-line' }, el('span', { class: 'author-name' }, parseProfile(pubkey).name), nip05Badge(pubkey), badge(zaps, cachedZapSats(pubkey)));
 }
 
 export function repostLine(repostedBy) {
   if (!repostedBy) return null;
   return el('div', { class: 'repost-line' }, `🔁 ${parseProfile(repostedBy).name} reposted`);
 }
+
+async function updateProfileBadges(container) {
+  container.hidden = true;
+  container.replaceChildren();
+  if (!settings.showProfileBadges) return;
+  try {
+    const badges = await loadProfileBadges(container.dataset.pubkey);
+    if (!settings.showProfileBadges) return;
+    container.replaceChildren(...badges.map(badge => {
+      const issuer = nip19.npubEncode(badge.issuer);
+      const title = `${badge.name}${badge.description ? `: ${badge.description}` : ''}\nIssuer: ${issuer}\nVerified NIP-58 award`;
+      const image = badge.image ? el('img', {
+        src: badge.image, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer', class: 'profile-badge-image'
+      }) : null;
+      image?.addEventListener('error', () => image.remove(), { once: true });
+      return el('a', {
+        class: 'profile-badge', href: `https://njump.me/${nip19.neventEncode({ id: badge.awardId, author: badge.issuer, kind: 8 })}`,
+        target: '_blank', rel: 'noopener noreferrer', title, 'aria-label': title
+      }, image, el('span', {}, badge.name));
+    }));
+    container.hidden = badges.length === 0;
+  } catch {
+    container.hidden = true;
+  }
+}
+
+export function profileBadges(pubkey) {
+  const container = el('section', {
+    class: 'profile-badges', 'data-pubkey': pubkey, 'aria-label': 'Verified profile badges', hidden: true
+  });
+  updateProfileBadges(container);
+  return container;
+}
+
+document.addEventListener('zs:profile-badges', () => {
+  document.querySelectorAll('.profile-badges').forEach(updateProfileBadges);
+});
 
 export function timeEl(createdAt) {
   const time = new Date(createdAt * 1000);
@@ -159,6 +209,14 @@ function fetchLinkPreview(href) {
 }
 
 function createLinkPreview(href) {
+  const embedUrl = youtubeEmbedUrl(href);
+  if (embedUrl) {
+    return el('iframe', {
+      class: 'youtube-embed', src: embedUrl, title: 'YouTube video player', loading: 'lazy',
+      allow: 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share',
+      allowfullscreen: true, referrerpolicy: 'strict-origin-when-cross-origin'
+    });
+  }
   const host = new URL(href).hostname;
   const title = el('strong', { class: 'link-preview-title' }, host);
   const description = el('span', { class: 'link-preview-description' }, 'Loading preview…');

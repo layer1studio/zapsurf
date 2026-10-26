@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Add searchable emoji and custom-text reactions alongside one-click hearts, with grouped reaction counts beside the heart in the note view and reactor profiles in the People panel.
+- Make existing reactions borderless and clickable to add the same reaction, with immediate count updates, duplicate-click protection, and retryable publishing errors.
+- Show NIP-05 verification checkmarks beside author names in notes, replies, and profiles only after the identifier resolves to the author's public key; cache and share verification lookups.
+- Display verified NIP-58 profile badges with issuer information and award links, support current and legacy accepted-badge lists, and add a Settings visibility toggle.
+- Embed supported YouTube video links using the privacy-enhanced player, with responsive sizing and an external viewing link.
+- Keep Home feed updates limited to followed authors and eligible reposts, including cached and newly discovered notes.
+- Show desktop previous/next note controls with the sidebar open or closed, while keeping them hidden on mobile.
+- Add regression tests for reaction grouping, NIP-05 verification, profile badges, YouTube links, and Home feed eligibility.
+
 ## 0.6.0 - 2026-10-24
 
 - Add a responsive one-to-one DM inbox with NIP-17 messages, NIP-44 encryption, NIP-59 gift wrapping, sender history copies, authenticated inbox relays, retry controls, and older-message loading.

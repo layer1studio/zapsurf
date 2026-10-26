@@ -32,6 +32,7 @@ export function parseProfile(pubkey) {
   return {
     name: data.display_name || data.name || `${npub.slice(0, 12)}…`,
     picture: safeHttpUrl(data.picture || ''),
+    nip05: typeof data.nip05 === 'string' ? data.nip05.trim() : '',
     lud16: typeof data.lud16 === 'string' ? data.lud16 : '',
     lud06: typeof data.lud06 === 'string' ? data.lud06 : '',
     npub,
@@ -64,6 +65,7 @@ export function actionsFor(id) {
 const MIN_ZAP_SATS_KEY = 'zs-min-zap-sats';
 const SHOW_ALL_FOLLOWS_KEY = 'zs-show-all-follows';
 const DEFAULT_ZAP_KEY = 'zs-default-zap';
+const SHOW_PROFILE_BADGES_KEY = 'zs-show-profile-badges';
 export const MAX_MIN_ZAP_SATS = 100_000_000;
 
 function validInt(value, max) {
@@ -73,6 +75,7 @@ function validInt(value, max) {
 export const settings = {
   minZapSats: validInt(store.get(MIN_ZAP_SATS_KEY), MAX_MIN_ZAP_SATS) ? store.get(MIN_ZAP_SATS_KEY) : 100,
   showAllFollows: store.get(SHOW_ALL_FOLLOWS_KEY) === true,
+  showProfileBadges: store.get(SHOW_PROFILE_BADGES_KEY) !== false,
   defaultZap: validInt(store.get(DEFAULT_ZAP_KEY), 10_000_000) ? store.get(DEFAULT_ZAP_KEY) : 0,
   setMinZapSats(value) {
     this.minZapSats = value;
@@ -85,5 +88,9 @@ export const settings = {
   setDefaultZap(value) {
     this.defaultZap = value;
     store.set(DEFAULT_ZAP_KEY, value);
+  },
+  setShowProfileBadges(value) {
+    this.showProfileBadges = value;
+    store.set(SHOW_PROFILE_BADGES_KEY, value);
   }
 };
