@@ -340,6 +340,22 @@ async function showProfile(pubkey, { updateHistory = true } = {}) {
   let followsCount = null;
   let followersCount = null;
   let popularFollowers = [];
+  const popularFollowersSummary = () => {
+    if (!popularFollowers.length) return null;
+    const namedFollowers = popularFollowers.map(follower => ({ ...follower, name: parseProfile(follower.pubkey).name }));
+    const visibleNames = namedFollowers.slice(0, 2).map(follower => follower.name).join(', ');
+    const extra = namedFollowers.length > 2 ? ` +${namedFollowers.length - 2} more` : '';
+    return el('span', { class: 'popular-followers-summary' },
+      el('span', { class: 'popular-followers-label' }, 'Followed by'),
+      el('span', { class: 'popular-followers', 'aria-label': `Popular followers: ${namedFollowers.map(follower => follower.name).join(', ')}` }, namedFollowers.map(follower => {
+        const link = profileLink(follower.pubkey, avatar(follower.pubkey, 'tiny'));
+        link.classList.add('popular-follower-link');
+        link.setAttribute('aria-label', `View ${follower.name}'s profile`);
+        link.setAttribute('title', `${follower.name} has about ${follower.followers.toLocaleString()} followers`);
+        return link;
+      })),
+      el('span', { class: 'popular-followers-names' }, `${visibleNames}${extra}`));
+  };
   const render = () => {
     const data = profileData(pubkey);
     const profile = parseProfile(pubkey);
@@ -364,15 +380,8 @@ async function showProfile(pubkey, { updateHistory = true } = {}) {
         followersCount !== null ? [
           el('dt', {}, 'Followers (approx.)'),
           el('dd', { class: 'profile-followers-value' },
-            String(followersCount),
-            popularFollowers.length ? el('span', { class: 'popular-followers', 'aria-label': 'Popular followers' }, popularFollowers.map(follower => {
-              const name = parseProfile(follower.pubkey).name;
-              const link = profileLink(follower.pubkey, avatar(follower.pubkey, 'tiny'));
-              link.classList.add('popular-follower-link');
-              link.setAttribute('aria-label', `View ${name}'s profile`);
-              link.setAttribute('title', `${name} has about ${follower.followers.toLocaleString()} followers`);
-              return link;
-            })) : null,
+            el('span', { class: 'profile-followers-count' }, String(followersCount)),
+            popularFollowersSummary(),
             el('span', { class: 'follower-help' },
               el('button', {
                 type: 'button',

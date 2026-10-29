@@ -736,8 +736,22 @@ a:focus-visible {
 .profile-meta dt { color: var(--muted); }
 .profile-meta dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .profile-meta .npub { display: flex; gap: 10px; align-items: center; }
-.profile-followers-value { display: flex; align-items: center; gap: 6px; }
-.popular-followers { display: inline-flex; align-items: center; margin-left: 2px; }
+.profile-followers-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.profile-followers-count { font-weight: 600; }
+.popular-followers-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.popular-followers-label { color: var(--muted); }
+.popular-followers { display: inline-flex; align-items: center; }
 .popular-follower-link {
   display: inline-flex;
   padding: 0;
@@ -750,6 +764,7 @@ a:focus-visible {
 }
 .popular-follower-link:hover,
 .popular-follower-link:focus-visible { position: relative; z-index: 1; }
+.popular-followers-names { overflow-wrap: anywhere; }
 .follower-help { position: relative; display: inline-flex; }
 .follower-help-button {
   display: grid;

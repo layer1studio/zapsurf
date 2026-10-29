@@ -124,7 +124,14 @@ function zapButton(note, rerender) {
     }
     runAction(button, async () => {
       toast(`Zapping ${formatSats(sats)} sats…`);
-      const { paid, invoice } = await zapNote(note, sats);
+      let result;
+      try {
+        result = await zapNote(note, sats);
+      } catch (err) {
+        openZapDialog(note);
+        throw err;
+      }
+      const { paid, invoice } = result;
       if (paid) {
         toast(`Zapped ${formatSats(sats)} sats ⚡`);
         rerender();

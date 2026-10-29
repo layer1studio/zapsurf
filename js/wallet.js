@@ -6,6 +6,7 @@ import { onPasswordUnlocked, runPasswordHooks } from './signer.js';
 
 const NWC_KEY = 'zs-nwc';
 const NWC_TIMEOUT_MS = 60_000;
+const ARK_BALANCE_RE = /insuffi?e?cient\s+ark\s+balance/i;
 let nwcSecret = null;
 
 export function getNwc() {
@@ -105,8 +106,12 @@ async function nwcPayInvoice(nwc, invoice) {
       onevent: async event => {
         try {
           const response = JSON.parse(await decrypt(event.content));
-          if (response.error) finish(reject, new Error(response.error.message || response.error.code || 'Wallet payment failed.'));
-          else finish(resolve, response.result);
+          if (response.error) {
+            const message = response.error.message || response.error.code || 'Wallet payment failed.';
+            finish(reject, new Error(ARK_BALANCE_RE.test(message)
+              ? `${message} Coinos returned this from your Nostr Wallet Connect wallet. Add sats to your Coinos Ark balance, swap/receive into Ark if Coinos shows the funds in another balance, or disconnect NWC to scan/copy the invoice with another Lightning wallet.`
+              : message));
+          } else finish(resolve, response.result);
         } catch {
           finish(reject, new Error('Could not read the wallet response.'));
         }
