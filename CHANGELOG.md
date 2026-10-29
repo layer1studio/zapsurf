@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Show popular followers' profile icons next to approximate follower counts on profile pages, using cached relay-derived follower estimates.
+- Support dragging or pasting media into private-message chats, uploading it to Blossom, inserting the URL into the draft, and rendering sent image/video links inline.
 - Support uploading videos as well as images from note and reply composers, with shared media validation and Blossom descriptor checks.
 - Keep activity/profile-opened notes from being replaced when sidebar feed loading finishes or refreshes.
 - Close modal dialogs when clicking outside the dialog content.

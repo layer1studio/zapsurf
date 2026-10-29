@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { countFollowers, createFollowerCountLoader } from '../js/follower-count.mjs';
+import { countFollowers, createFollowerCountLoader, followerCountsForTargets, popularFollowersFromEvents } from '../js/follower-count.mjs';
 
 const target = 'a'.repeat(64);
 const author = 'b'.repeat(64);
@@ -71,4 +71,34 @@ test('does not cache query failures or treat them as a zero count', async () => 
   fail = false;
   assert.equal(await loader(target), 0);
   assert.equal(await loader(target), 0);
+});
+test('counts followers for several target accounts from shared contact-list events', () => {
+  const popular = 'd'.repeat(64);
+  assert.deepEqual(followerCountsForTargets([
+    event(author, [['p', target], ['p', popular]]),
+    event(otherAuthor, [['p', popular]]),
+    event('invalid', [['p', popular]]),
+    event('e'.repeat(64), [['p', 'invalid']])
+  ], [target, popular]), new Map([[target, 1], [popular, 2]]));
+});
+
+test('returns popular followers sorted by their own follower counts', () => {
+  const followerA = 'd'.repeat(64);
+  const followerB = 'e'.repeat(64);
+  const followerC = 'f'.repeat(64);
+  const popularityEvents = [
+    event('1'.repeat(64), [['p', followerA]]),
+    event('2'.repeat(64), [['p', followerB]]),
+    event('3'.repeat(64), [['p', followerB]]),
+    event('4'.repeat(64), [['p', followerC]])
+  ];
+
+  assert.deepEqual(popularFollowersFromEvents([
+    event(followerA, [['p', target]]),
+    event(followerB, [['p', target]]),
+    event(followerC, [['p', target]])
+  ], popularityEvents, target, { minFollowers: 1, limit: 2 }), [
+    { pubkey: followerB, followers: 2 },
+    { pubkey: followerA, followers: 1 }
+  ]);
 });

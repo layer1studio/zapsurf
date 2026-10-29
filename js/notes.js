@@ -3,7 +3,7 @@ import { pool, PROFILE_RELAYS, DEFAULT_RELAYS, profiles, rememberProfile, statsF
 import { fetchRelayLists, getWriteRelays, planOutbox, uniqueRelays } from './relays.js';
 import { chunk, now, isReply, isDirectReplyTo, emit } from './util.js';
 import { contentCache } from './cache.mjs';
-import { createFollowerCountLoader, FOLLOWER_COUNT_CACHE_MS } from './follower-count.mjs';
+import { createFollowerCountLoader, createPopularFollowersLoader, FOLLOWER_COUNT_CACHE_MS, POPULAR_FOLLOWERS_CACHE_MS } from './follower-count.mjs';
 import { createProfileBadgeLoader } from './profile-badges.mjs';
 import { groupReactions } from './reaction-groups.mjs';
 
@@ -67,15 +67,28 @@ export async function fetchContactList(pubkey) {
   return newest(await pool.querySync(relays, { kinds: [3], authors: [pubkey] }, { maxWait: QUERY_WAIT_MS }));
 }
 
+const followerCountRelays = uniqueRelays(PROFILE_RELAYS, DEFAULT_RELAYS);
+
 const loadFollowerCount = createFollowerCountLoader({
   query: queryFollowerEvents,
   cache: contentCache,
-  relays: uniqueRelays(PROFILE_RELAYS, DEFAULT_RELAYS),
+  relays: followerCountRelays,
   ttlMs: FOLLOWER_COUNT_CACHE_MS
+});
+
+const loadPopularFollowers = createPopularFollowersLoader({
+  query: queryFollowerEvents,
+  cache: contentCache,
+  relays: followerCountRelays,
+  ttlMs: POPULAR_FOLLOWERS_CACHE_MS
 });
 
 export function fetchFollowerCount(pubkey) {
   return loadFollowerCount(pubkey);
+}
+
+export function fetchPopularFollowers(pubkey) {
+  return loadPopularFollowers(pubkey);
 }
 
 export async function getFollows(pubkey) {

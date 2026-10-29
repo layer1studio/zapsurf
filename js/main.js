@@ -1,6 +1,6 @@
 import { pool, PROFILE_RELAYS, rememberProfile, profiles, parseProfile, ensureProfile, settings, MAX_MIN_ZAP_SATS, statsFor, actionsFor } from './state.js';
 import { FEEDS, DEFAULT_FEED_ID, loadTrendingItems } from './primal.js';
-import { loadHomeItems, loadThread as fetchThread, prefetchThread, ensureProfiles, loadNoteStats, refreshNoteStats, pollRecentNotes, refreshThread, loadProfileNotes, getCachedProfileNotes, refreshProfileNotes, loadNoteEvent, fetchContactList, fetchFollowerCount, getFollows } from './notes.js';
+import { loadHomeItems, loadThread as fetchThread, prefetchThread, ensureProfiles, loadNoteStats, refreshNoteStats, pollRecentNotes, refreshThread, loadProfileNotes, getCachedProfileNotes, refreshProfileNotes, loadNoteEvent, fetchContactList, fetchFollowerCount, fetchPopularFollowers, getFollows } from './notes.js';
 import { countRecentZapsSent, loadNoteZaps as fetchNoteZaps, cachedZapCount, cachedZapSats, cacheZapSummary, hasCachedZapSummary } from './zapcount.js';
 import { getSession, canSign, isOwn, logout, LOGIN_METHODS } from './signer.js';
 import { avatar, authorLine, badge, profileBadges, repostLine, renderContent, timeEl } from './render.js';
@@ -339,6 +339,7 @@ async function showProfile(pubkey, { updateHistory = true } = {}) {
   let zaps = cachedZapCount(pubkey);
   let followsCount = null;
   let followersCount = null;
+  let popularFollowers = [];
   const render = () => {
     const data = profileData(pubkey);
     const profile = parseProfile(pubkey);
@@ -364,6 +365,14 @@ async function showProfile(pubkey, { updateHistory = true } = {}) {
           el('dt', {}, 'Followers (approx.)'),
           el('dd', { class: 'profile-followers-value' },
             String(followersCount),
+            popularFollowers.length ? el('span', { class: 'popular-followers', 'aria-label': 'Popular followers' }, popularFollowers.map(follower => {
+              const name = parseProfile(follower.pubkey).name;
+              const link = profileLink(follower.pubkey, avatar(follower.pubkey, 'tiny'));
+              link.classList.add('popular-follower-link');
+              link.setAttribute('aria-label', `View ${name}'s profile`);
+              link.setAttribute('title', `${name} has about ${follower.followers.toLocaleString()} followers`);
+              return link;
+            })) : null,
             el('span', { class: 'follower-help' },
               el('button', {
                 type: 'button',
@@ -394,6 +403,14 @@ async function showProfile(pubkey, { updateHistory = true } = {}) {
   fetchFollowerCount(pubkey).then(count => {
     if (token !== profileToken || count === null) return;
     followersCount = count;
+    render();
+  }).catch(() => {});
+  fetchPopularFollowers(pubkey).then(async followers => {
+    if (token !== profileToken || !followers.length) return;
+    popularFollowers = followers;
+    render();
+    await ensureProfiles(followers.map(follower => follower.pubkey));
+    if (token !== profileToken) return;
     render();
   }).catch(() => {});
 
