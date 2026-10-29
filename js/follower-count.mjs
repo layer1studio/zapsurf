@@ -1,7 +1,8 @@
 const HEX_PUBKEY = /^[0-9a-f]{64}$/;
 export const FOLLOWER_COUNT_CACHE_MS = 30 * 60 * 1000;
 export const POPULAR_FOLLOWERS_CACHE_MS = 30 * 60 * 1000;
-export const POPULAR_FOLLOWER_MIN_COUNT = 1000;
+// Show any popular followers regardless of their own follower count.
+export const POPULAR_FOLLOWER_MIN_COUNT = 0;
 export const POPULAR_FOLLOWER_LIMIT = 6;
 export const POPULAR_FOLLOWER_CANDIDATE_LIMIT = 150;
 
@@ -72,7 +73,7 @@ export function createPopularFollowersLoader({
 }) {
   return async pubkey => {
     if (!HEX_PUBKEY.test(pubkey || '')) return [];
-    const key = `profile-popular-followers:${pubkey}`;
+    const key = `profile-popular-followers:v2:${pubkey}`;
     const cached = cache.get(key);
     if (Array.isArray(cached)) return cached.filter(item => HEX_PUBKEY.test(item?.pubkey || '') && Number.isSafeInteger(item.followers));
 

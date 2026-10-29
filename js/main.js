@@ -381,7 +381,6 @@ async function showProfile(pubkey, { updateHistory = true } = {}) {
           el('dt', {}, 'Followers (approx.)'),
           el('dd', { class: 'profile-followers-value' },
             el('span', { class: 'profile-followers-count' }, String(followersCount)),
-            popularFollowersSummary(),
             el('span', { class: 'follower-help' },
               el('button', {
                 type: 'button',
@@ -394,7 +393,8 @@ async function showProfile(pubkey, { updateHistory = true } = {}) {
                 }
               }, '?'),
               el('span', { id: 'follower-count-accuracy', class: 'follower-help-popup', role: 'tooltip' },
-                'This is an estimate from contact lists found on the relays ZapSurf queried. Relay coverage is incomplete, and older lists may include people who have since unfollowed.')))
+                'This is an estimate from contact lists found on the relays ZapSurf queried. Relay coverage is incomplete, and older lists may include people who have since unfollowed.')),
+            popularFollowersSummary())
         ] : null,
         el('dt', {}, 'Public key'),
         el('dd', { class: 'npub' },
