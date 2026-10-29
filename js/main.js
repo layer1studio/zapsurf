@@ -797,11 +797,12 @@ async function loadThread(note, container, interactionDropdown) {
 
 function showNote(item, button = null, { updateHistory = true } = {}) {
   routeToken++;
+  if (!button) loadToken++;
   routeNotice = '';
   if (updateHistory) updatePath(notePath(item.note.id, nip19));
   for (const other of listEl.querySelectorAll('.note-item')) other.removeAttribute('aria-current');
   button?.setAttribute('aria-current', 'true');
-  if (button) selectedNoteId = item.note.id;
+  selectedNoteId = button ? item.note.id : null;
   shownNoteId = item.note.id;
   profileOpen = null;
   profileToken++;

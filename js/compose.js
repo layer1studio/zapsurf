@@ -4,8 +4,8 @@ import { renderContent, quotePreview } from './render.js';
 import { ensureProfile, parseProfile, profiles } from './state.js';
 import { ensureProfiles, getFollows } from './notes.js';
 import { getSession, canSign } from './signer.js';
-import { IMAGE_TYPES, validateImage } from './blossom.mjs';
-import { resolveBlossomServer, uploadBlossomImage } from './blossom.js';
+import { MEDIA_TYPES, validateMedia } from './blossom.mjs';
+import { resolveBlossomServer, uploadBlossomMedia } from './blossom.js';
 import { rebaseMentions, serializeMentions } from './compose-text.mjs';
 import { el } from './util.js';
 import { toast, setBusy } from './dialogs.js';
@@ -184,8 +184,8 @@ export function createEmojiPicker(input, insertEmoji) {
 function createEditorTools(input) {
   const state = { mentions: [], lastValue: input.value, queryId: 0, suggestionIndex: 0, nip05Timer: null };
   const emojiTools = createEmojiPicker(input, (emoji, start, end) => applyEdit(start, end, emoji));
-  const uploadButton = el('button', { type: 'button', class: 'icon-button image-upload', title: 'Upload images', 'aria-label': 'Upload images' }, '\u{1F5BC}');
-  const fileInput = el('input', { type: 'file', accept: IMAGE_TYPES.join(','), multiple: true, hidden: true, 'aria-label': 'Select images' });
+  const uploadButton = el('button', { type: 'button', class: 'icon-button media-upload', title: 'Upload images or videos', 'aria-label': 'Upload images or videos' }, '\u{1F4F7}');
+  const fileInput = el('input', { type: 'file', accept: MEDIA_TYPES.join(','), multiple: true, hidden: true, 'aria-label': 'Select files' });
   const uploadStatus = el('span', { class: 'upload-status', role: 'status' });
   const uploadCancel = el('button', { type: 'button', class: 'icon-button', title: 'Cancel upload', 'aria-label': 'Cancel upload', hidden: true }, '\u2715');
   const toolButtons = el('div', { class: 'compose-tool-buttons' }, emojiTools.toolbar.firstElementChild, uploadButton, fileInput);
@@ -203,7 +203,7 @@ function createEditorTools(input) {
 
   uploadButton.addEventListener('click', () => {
     if (!canSign()) {
-      toast('Log in with a signer to upload images.');
+      toast('Log in with a signer to upload files.');
       return;
     }
     fileInput.click();
@@ -226,12 +226,12 @@ function createEditorTools(input) {
     input.readOnly = true;
     input.setAttribute('aria-busy', 'true');
     uploadCancel.hidden = false;
-    uploadStatus.replaceChildren('Checking image server...');
+    uploadStatus.replaceChildren('Checking media server...');
     const failures = [];
     const uninserted = [];
     let uploaded = 0;
     const showUploadedLinks = () => {
-      for (const url of uninserted) uploadStatus.append(' Draft is full. Uploaded image: ', el('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, url));
+      for (const url of uninserted) uploadStatus.append(' Draft is full. Uploaded file: ', el('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, url));
     };
     const release = () => {
       if (activeUpload !== controller) return;
@@ -244,7 +244,7 @@ function createEditorTools(input) {
     cancelUpload = () => {
       if (activeUpload !== controller) return;
       controller.abort();
-      uploadStatus.textContent = 'Upload cancelled. Uploaded images remain in the draft.';
+      uploadStatus.textContent = 'Upload cancelled. Uploaded files remain in the draft.';
       showUploadedLinks();
       release();
     };
@@ -253,25 +253,25 @@ function createEditorTools(input) {
     observer.observe(document.body, { childList: true, subtree: true });
     controller.signal.addEventListener('abort', () => observer.disconnect(), { once: true });
     try {
-      for (const file of files) validateImage(file);
+      for (const file of files) validateMedia(file);
       const server = await resolveBlossomServer(pubkey);
       controller.signal.throwIfAborted();
       for (const [index, file] of files.entries()) {
         uploadStatus.textContent = `Uploading ${index + 1}/${files.length} to ${new URL(server).host}...`;
         try {
-          const image = await uploadBlossomImage(file, server, pubkey, controller.signal);
+          const media = await uploadBlossomMedia(file, server, pubkey, controller.signal);
           controller.signal.throwIfAborted();
           const before = position && input.value[position - 1] !== '\n' ? '\n' : '';
-          const insertion = `${before}${image.url}\n`;
+          const insertion = `${before}${media.url}\n`;
           if (applyEdit(position, position, insertion)) position += insertion.length;
-          else uninserted.push(image.url);
+          else uninserted.push(media.url);
           uploaded++;
         } catch (error) {
           if (controller.signal.aborted || error.name === 'SigningError') throw error;
           failures.push(`${file.name}: ${error.message}`);
         }
       }
-      uploadStatus.replaceChildren(`${uploaded}/${files.length} images uploaded.${failures.length ? ` ${failures.join(' ')}` : ''}`);
+      uploadStatus.replaceChildren(`${uploaded}/${files.length} files uploaded.${failures.length ? ` ${failures.join(' ')}` : ''}`);
       showUploadedLinks();
     } catch (error) {
       if (!controller.signal.aborted) {

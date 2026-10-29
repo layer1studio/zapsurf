@@ -1,5 +1,7 @@
-export const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+export const MAX_MEDIA_BYTES = 100 * 1024 * 1024;
 export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif'];
+export const VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime'];
+export const MEDIA_TYPES = [...IMAGE_TYPES, ...VIDEO_TYPES];
 
 function safeUrl(value) {
   const url = new URL(value);
@@ -32,17 +34,17 @@ export function selectBlossomServers(events, pubkey, verify) {
   return blossomServers(latest);
 }
 
-export function validateImage(file) {
-  if (!IMAGE_TYPES.includes(file?.type)) throw new Error('Choose a JPEG, PNG, GIF, WebP or AVIF image.');
-  if (!file.size) throw new Error('The image is empty.');
-  if (file.size > MAX_IMAGE_BYTES) throw new Error('Images must be 20 MiB or smaller.');
+export function validateMedia(file) {
+  if (!MEDIA_TYPES.includes(file?.type)) throw new Error('Choose a supported image or video file.');
+  if (!file.size) throw new Error('The file is empty.');
+  if (file.size > MAX_MEDIA_BYTES) throw new Error('Files must be 100 MiB or smaller.');
 }
 
 export function uploadAuthorization(hash, server, timestamp) {
   return {
     kind: 24242,
     created_at: timestamp - 1,
-    content: 'Upload image to Blossom',
+    content: 'Upload media to Blossom',
     tags: [['t', 'upload'], ['x', hash], ['expiration', String(timestamp + 300)], ['server', new URL(server).hostname.toLowerCase()]]
   };
 }
@@ -57,13 +59,13 @@ const UPLOAD_ERRORS = {
   401: 'The Blossom server rejected upload authorization.',
   402: 'This Blossom server requires payment. Manage your account on the server first.',
   403: 'This Blossom server does not allow uploads for your account.',
-  413: 'The image exceeds this Blossom server\'s size limit.',
-  415: 'This Blossom server does not support this image type.',
+  413: 'The file exceeds this Blossom server\'s size limit.',
+  415: 'This Blossom server does not support this file type.',
   429: 'Too many uploads. Please try again later.'
 };
 
-export async function uploadImage(file, server, { signEvent, fetch: request = globalThis.fetch, signal, now = () => Math.floor(Date.now() / 1000) } = {}) {
-  validateImage(file);
+export async function uploadMedia(file, server, { signEvent, fetch: request = globalThis.fetch, signal, now = () => Math.floor(Date.now() / 1000) } = {}) {
+  validateMedia(file);
   const origin = normaliseBlossomServer(server);
   if (!origin) throw new Error('Set a valid Blossom server in Settings.');
   signal?.throwIfAborted();
@@ -104,10 +106,10 @@ export async function uploadImage(file, server, { signEvent, fetch: request = gl
     descriptor = await response.json();
     const url = safeUrl(descriptor.url);
     if (descriptor.sha256 !== hash || descriptor.size !== file.size || descriptor.type !== file.type ||
-      !/\.(jpe?g|png|gif|webp|avif)$/i.test(url.pathname)) throw new Error('Invalid descriptor');
+      !/\.(jpe?g|png|gif|webp|avif|mp4|webm|ogv|mov)$/i.test(url.pathname)) throw new Error('Invalid descriptor');
     descriptor.url = url.href;
   } catch {
-    throw new Error('The Blossom server returned an invalid image descriptor.');
+    throw new Error('The Blossom server returned an invalid file descriptor.');
   }
   signal?.throwIfAborted();
   return descriptor;

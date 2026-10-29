@@ -3,7 +3,7 @@ import { pool, PROFILE_RELAYS } from './state.js';
 import { getWriteRelays, uniqueRelays } from './relays.js';
 import { getSession, canSign, signEvent } from './signer.js';
 import { store } from './util.js';
-import { selectBlossomServers, normaliseBlossomServer, uploadImage } from './blossom.mjs';
+import { selectBlossomServers, normaliseBlossomServer, uploadMedia } from './blossom.mjs';
 
 const discoveries = new Map();
 const pending = new Map();
@@ -48,12 +48,12 @@ export async function resolveBlossomServer(pubkey) {
   return server;
 }
 
-export function uploadBlossomImage(file, server, pubkey, signal) {
-  return uploadImage(file, server, {
+export function uploadBlossomMedia(file, server, pubkey, signal) {
+  return uploadMedia(file, server, {
     signal,
     signEvent: template => {
       signal.throwIfAborted();
-      if (!canSign() || getSession()?.pubkey !== pubkey) throw new Error('Your account changed. Select the images again.');
+      if (!canSign() || getSession()?.pubkey !== pubkey) throw new Error('Your account changed. Select the files again.');
       return signEvent(template);
     }
   });

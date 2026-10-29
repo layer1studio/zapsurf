@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normaliseBlossomServer, blossomServers, selectBlossomServers, validateImage, uploadAuthorization, authorizationHeader, uploadImage, MAX_IMAGE_BYTES } from '../js/blossom.mjs';
+import { normaliseBlossomServer, blossomServers, selectBlossomServers, validateMedia, uploadAuthorization, authorizationHeader, uploadMedia, MAX_MEDIA_BYTES } from '../js/blossom.mjs';
 
 const file = new Blob(['image fixture'], { type: 'image/png' });
 const server = 'https://images.example';
@@ -38,13 +38,13 @@ test('breaks equal-time server-list ties by lowest event ID', () => {
   ], 'alice', () => true), [server]);
 });
 
-test('rejects empty, oversized and unsupported images', () => {
-  assert.throws(() => validateImage(new Blob([], { type: 'image/png' })), /empty/);
-  assert.throws(() => validateImage({ size: MAX_IMAGE_BYTES + 1, type: 'image/png' }), /20 MiB/);
-  assert.throws(() => validateImage(new Blob(['svg'], { type: 'image/svg+xml' })), /Choose/);
+test('rejects empty, oversized and unsupported media', () => {
+  assert.throws(() => validateMedia(new Blob([], { type: 'image/png' })), /empty/);
+  assert.throws(() => validateMedia({ size: MAX_MEDIA_BYTES + 1, type: 'image/png' }), /100 MiB/);
+  assert.throws(() => validateMedia(new Blob(['svg'], { type: 'image/svg+xml' })), /Choose/);
 });
 
-test('authorization is scoped to the image, server and five-minute expiration', () => {
+test('authorization is scoped to the media, server and five-minute expiration', () => {
   const template = uploadAuthorization(hash, server, 1000);
   assert.equal(template.kind, 24242);
   assert.equal(template.created_at, 999);
@@ -56,7 +56,7 @@ test('authorization is scoped to the image, server and five-minute expiration', 
 
 test('uploads exact bytes with signed auth via raw PUT and validates descriptor', async () => {
   let called = false;
-  const result = await uploadImage(file, server, { signEvent, now: () => 1000, fetch: async (url, options) => {
+  const result = await uploadMedia(file, server, { signEvent, now: () => 1000, fetch: async (url, options) => {
     called = true;
     assert.equal(url, `${server}/upload`);
     assert.equal(options.method, 'PUT');
@@ -72,21 +72,21 @@ test('uploads exact bytes with signed auth via raw PUT and validates descriptor'
 });
 
 test('accepts existing blobs and safe CDN URLs', async () => {
-  const result = await uploadImage(file, server, { signEvent, fetch: async () => response({ ...descriptor, url: `https://cdn.example/${hash}.png` }, 200) });
+  const result = await uploadMedia(file, server, { signEvent, fetch: async () => response({ ...descriptor, url: `https://cdn.example/${hash}.png` }, 200) });
   assert.equal(result.url, `https://cdn.example/${hash}.png`);
 });
 
-test('rejects mismatched hashes, sizes, types and unsafe image URLs', async () => {
+test('rejects mismatched hashes, sizes, types and unsafe media URLs', async () => {
   for (const change of [{ sha256: 'b'.repeat(64) }, { size: 0 }, { type: 'text/html' }, { url: 'javascript:alert(1)' }, { url: `${server}/page.html` }]) {
-    await assert.rejects(uploadImage(file, server, { signEvent, fetch: async () => response({ ...descriptor, ...change }) }), /invalid image descriptor/);
+    await assert.rejects(uploadMedia(file, server, { signEvent, fetch: async () => response({ ...descriptor, ...change }) }), /invalid file descriptor/);
   }
 });
 
 test('reports server errors and connection failures', async () => {
-  for (const [status, message] of [[401, /authorization/], [402, /payment/], [403, /does not allow/], [413, /size limit/], [415, /image type/], [429, /Too many/]]) {
-    await assert.rejects(uploadImage(file, server, { signEvent, fetch: async () => response({}, status) }), message);
+  for (const [status, message] of [[401, /authorization/], [402, /payment/], [403, /does not allow/], [413, /size limit/], [415, /file type/], [429, /Too many/]]) {
+    await assert.rejects(uploadMedia(file, server, { signEvent, fetch: async () => response({}, status) }), message);
   }
-  await assert.rejects(uploadImage(file, server, { signEvent, fetch: async () => { throw new TypeError('Failed to fetch'); } }), /CORS/);
+  await assert.rejects(uploadMedia(file, server, { signEvent, fetch: async () => { throw new TypeError('Failed to fetch'); } }), /CORS/);
 });
 
 test('never sends bytes after cancellation, signing refusal or invalid input', async () => {
@@ -94,10 +94,10 @@ test('never sends bytes after cancellation, signing refusal or invalid input', a
   const fetch = async () => { requests++; return response(); };
   const controller = new AbortController();
   controller.abort();
-  await assert.rejects(uploadImage(file, server, { signEvent, fetch, signal: controller.signal }), { name: 'AbortError' });
-  await assert.rejects(uploadImage(file, server, { fetch, signEvent: async () => { throw new Error('Denied'); } }), { name: 'SigningError' });
+  await assert.rejects(uploadMedia(file, server, { signEvent, fetch, signal: controller.signal }), { name: 'AbortError' });
+  await assert.rejects(uploadMedia(file, server, { fetch, signEvent: async () => { throw new Error('Denied'); } }), { name: 'SigningError' });
   const duringSigning = new AbortController();
-  await assert.rejects(uploadImage(file, server, { fetch, signal: duringSigning.signal, signEvent: async template => { duringSigning.abort(); return template; } }), { name: 'AbortError' });
-  await assert.rejects(uploadImage(file, '', { signEvent, fetch }), /Settings/);
+  await assert.rejects(uploadMedia(file, server, { fetch, signal: duringSigning.signal, signEvent: async template => { duringSigning.abort(); return template; } }), { name: 'AbortError' });
+  await assert.rejects(uploadMedia(file, '', { signEvent, fetch }), /Settings/);
   assert.equal(requests, 0);
 });

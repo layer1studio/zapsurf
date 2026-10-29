@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Support uploading videos as well as images from note and reply composers, with shared media validation and Blossom descriptor checks.
+- Keep activity/profile-opened notes from being replaced when sidebar feed loading finishes or refreshes.
+- Close modal dialogs when clicking outside the dialog content.
+
 ## 0.7.0 - 2026-10-27
 
 - Add searchable emoji and custom-text reactions alongside one-click hearts, with grouped reaction counts beside the heart in the note view and reactor profiles in the People panel.

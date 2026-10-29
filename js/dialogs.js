@@ -1,5 +1,16 @@
 let toastTimer = null;
 
+function clickedOutsideDialog(dialog, event) {
+  const rect = dialog.getBoundingClientRect();
+  return event.clientX < rect.left || event.clientX > rect.right ||
+    event.clientY < rect.top || event.clientY > rect.bottom;
+}
+
+document.addEventListener('click', event => {
+  if (!(event.target instanceof HTMLDialogElement) || !event.target.open) return;
+  if (clickedOutsideDialog(event.target, event)) event.target.close();
+});
+
 document.getElementById('unlock-cancel').addEventListener('click', () => document.getElementById('unlock-dialog').close());
 
 export function toast(message, kind = 'info') {
