@@ -4,7 +4,7 @@ import { renderContent, quotePreview } from './render.js';
 import { ensureProfile, parseProfile, profiles } from './state.js';
 import { ensureProfiles, getFollows } from './notes.js';
 import { getSession, canSign } from './signer.js';
-import { MEDIA_TYPES, validateMedia } from './blossom.mjs';
+import { MEDIA_TYPES, prepareMediaForUpload, validateMedia } from './blossom.mjs';
 import { resolveBlossomServer, uploadBlossomMedia } from './blossom.js';
 import { rebaseMentions, serializeMentions } from './compose-text.mjs';
 import { el } from './util.js';
@@ -209,11 +209,12 @@ function createEditorTools(input) {
     fileInput.click();
   });
   uploadCancel.addEventListener('click', () => cancelUpload());
-  fileInput.addEventListener('change', async () => {
-    const files = [...fileInput.files];
-    fileInput.value = '';
+  async function uploadFiles(files) {
     if (!files.length || activeUpload) return;
-    if (!canSign()) return;
+    if (!canSign()) {
+      toast('Log in with a signer to upload files.');
+      return;
+    }
     const pubkey = getSession().pubkey;
     const controller = new AbortController();
     activeUpload = controller;
@@ -254,10 +255,16 @@ function createEditorTools(input) {
     controller.signal.addEventListener('abort', () => observer.disconnect(), { once: true });
     try {
       for (const file of files) validateMedia(file);
+      const prepared = [];
+      for (const [index, file] of files.entries()) {
+        uploadStatus.textContent = `Converting ${index + 1}/${files.length} to WebP and removing geodata...`;
+        prepared.push(await prepareMediaForUpload(file, { signal: controller.signal }));
+      }
+      for (const file of prepared) validateMedia(file);
       const server = await resolveBlossomServer(pubkey);
       controller.signal.throwIfAborted();
-      for (const [index, file] of files.entries()) {
-        uploadStatus.textContent = `Uploading ${index + 1}/${files.length} to ${new URL(server).host}...`;
+      for (const [index, file] of prepared.entries()) {
+        uploadStatus.textContent = `Uploading ${index + 1}/${prepared.length} to ${new URL(server).host}...`;
         try {
           const media = await uploadBlossomMedia(file, server, pubkey, controller.signal);
           controller.signal.throwIfAborted();
@@ -283,6 +290,12 @@ function createEditorTools(input) {
       controller.abort();
       observer.disconnect();
     }
+  }
+
+  fileInput.addEventListener('change', async () => {
+    const files = [...fileInput.files];
+    fileInput.value = '';
+    uploadFiles(files);
   });
 
   const refreshPreview = () => {
@@ -399,6 +412,33 @@ function createEditorTools(input) {
       applyEdit(mention.start, mention.end, next, { text: mention.label, pubkey: mention.pubkey });
     }
   }
+
+  input.addEventListener('paste', event => {
+    const files = [...(event.clipboardData?.files || [])].filter(file => MEDIA_TYPES.includes(file.type));
+    if (!files.length) return;
+    event.preventDefault();
+    uploadFiles(files);
+  });
+  input.addEventListener('dragenter', event => {
+    if (![...(event.dataTransfer?.types || [])].includes('Files')) return;
+    event.preventDefault();
+    input.classList.add('media-drag-over');
+  });
+  input.addEventListener('dragover', event => {
+    if (![...(event.dataTransfer?.types || [])].includes('Files')) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = canSign() && !activeUpload ? 'copy' : 'none';
+    input.classList.add('media-drag-over');
+  });
+  input.addEventListener('dragleave', event => {
+    if (!input.contains(event.relatedTarget)) input.classList.remove('media-drag-over');
+  });
+  input.addEventListener('drop', event => {
+    if (![...(event.dataTransfer?.types || [])].includes('Files')) return;
+    event.preventDefault();
+    input.classList.remove('media-drag-over');
+    uploadFiles([...(event.dataTransfer?.files || [])].filter(file => MEDIA_TYPES.includes(file.type)));
+  });
 
   input.addEventListener('input', () => {
     state.mentions = rebaseMentions(state.lastValue, input.value, state.mentions);

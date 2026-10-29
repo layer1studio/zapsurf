@@ -2,7 +2,7 @@ import { createElement, Mail, Send, X, Settings2, ArrowLeft, RefreshCw } from 'h
 import { SimplePool, nip19, nip44, getEventHash, generateSecretKey, finalizeEvent, verifyEvent } from './deps.js';
 import { PROFILE_RELAYS, parseProfile } from './state.js';
 import { getSession, canSign, signEvent, encryptMessage, decryptMessage, encryptLegacyMessage, decryptLegacyMessage, prepareMessageSigner } from './signer.js';
-import { MEDIA_TYPES, validateMedia } from './blossom.mjs';
+import { MEDIA_TYPES, prepareMediaForUpload, validateMedia } from './blossom.mjs';
 import { resolveBlossomServer, uploadBlossomMedia } from './blossom.js';
 import { getReadRelays, getWriteRelays } from './relays.js';
 import { openLoginDialog } from './login.js';
@@ -151,12 +151,18 @@ async function uploadMessageMedia(files) {
   let uploaded = 0;
   try {
     for (const file of files) validateMedia(file);
-    sendStatus.textContent = 'Checking media server...';
     composeState.hidden = false;
+    const prepared = [];
+    for (const [index, file] of files.entries()) {
+      sendStatus.textContent = `Converting ${index + 1}/${files.length} to WebP and removing geodata...`;
+      prepared.push(await prepareMediaForUpload(file, { signal: controller.signal }));
+    }
+    for (const file of prepared) validateMedia(file);
+    sendStatus.textContent = 'Checking media server...';
     const server = await resolveBlossomServer(pubkey);
     controller.signal.throwIfAborted();
-    for (const [index, file] of files.entries()) {
-      sendStatus.textContent = `Uploading ${index + 1}/${files.length} to ${new URL(server).host}...`;
+    for (const [index, file] of prepared.entries()) {
+      sendStatus.textContent = `Uploading ${index + 1}/${prepared.length} to ${new URL(server).host}...`;
       try {
         const media = await uploadBlossomMedia(file, server, pubkey, controller.signal);
         controller.signal.throwIfAborted();

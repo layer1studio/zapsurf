@@ -988,6 +988,8 @@ a:focus-visible {
 
 .compose-modal { width: min(900px, calc(100vw - 32px)); }
 .compose-modal #compose-text { min-height: 220px; }
+.compose-modal #compose-text.media-drag-over,
+.inline-reply textarea.media-drag-over { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .compose-modal #compose-context:not(:empty) { max-height: min(30vh, 260px); overflow: auto; margin-bottom: 12px; }
 
 .notifications-modal { width: min(560px, calc(100vw - 32px)); }

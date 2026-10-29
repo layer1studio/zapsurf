@@ -1,4 +1,5 @@
 export const MAX_MEDIA_BYTES = 100 * 1024 * 1024;
+export const WEBP_QUALITY = 0.92;
 export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif'];
 export const VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime'];
 export const MEDIA_TYPES = [...IMAGE_TYPES, ...VIDEO_TYPES];
@@ -38,6 +39,75 @@ export function validateMedia(file) {
   if (!MEDIA_TYPES.includes(file?.type)) throw new Error('Choose a supported image or video file.');
   if (!file.size) throw new Error('The file is empty.');
   if (file.size > MAX_MEDIA_BYTES) throw new Error('Files must be 100 MiB or smaller.');
+}
+
+function webpName(name = 'image') {
+  const base = String(name).replace(/\.[^.]*$/, '') || 'image';
+  return `${base}.webp`;
+}
+
+async function blobFromCanvas(canvas, type, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Could not convert this image.')), type, quality);
+  });
+}
+
+function convertedFile(blob, source) {
+  return new File([blob], webpName(source.name), { type: 'image/webp', lastModified: Date.now() });
+}
+
+export async function prepareMediaForUpload(file, { signal } = {}) {
+  validateMedia(file);
+  if (VIDEO_TYPES.includes(file.type)) {
+    return new File([file.slice(0, file.size)], file.name, { type: file.type, lastModified: Date.now() });
+  }
+  if (!IMAGE_TYPES.includes(file.type) || file.type === 'image/gif') return file;
+  signal?.throwIfAborted();
+
+  if ('createImageBitmap' in globalThis) {
+    let bitmap;
+    try {
+      bitmap = await createImageBitmap(file);
+      signal?.throwIfAborted();
+      const canvas = typeof OffscreenCanvas === 'function'
+        ? new OffscreenCanvas(bitmap.width, bitmap.height)
+        : Object.assign(document.createElement('canvas'), { width: bitmap.width, height: bitmap.height });
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Could not convert this image.');
+      context.drawImage(bitmap, 0, 0);
+      const blob = canvas.convertToBlob
+        ? await canvas.convertToBlob({ type: 'image/webp', quality: WEBP_QUALITY })
+        : await blobFromCanvas(canvas, 'image/webp', WEBP_QUALITY);
+      signal?.throwIfAborted();
+      return convertedFile(blob, file);
+    } finally {
+      bitmap?.close?.();
+    }
+  }
+
+  if (typeof Image === 'undefined') throw new Error('This browser cannot convert images before upload.');
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.decoding = 'async';
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = () => reject(new Error('Could not read this image.'));
+      image.src = url;
+    });
+    signal?.throwIfAborted();
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Could not convert this image.');
+    context.drawImage(image, 0, 0);
+    const blob = await blobFromCanvas(canvas, 'image/webp', WEBP_QUALITY);
+    signal?.throwIfAborted();
+    return convertedFile(blob, file);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 export function uploadAuthorization(hash, server, timestamp) {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normaliseBlossomServer, blossomServers, selectBlossomServers, validateMedia, uploadAuthorization, authorizationHeader, uploadMedia, MAX_MEDIA_BYTES } from '../js/blossom.mjs';
+import { normaliseBlossomServer, blossomServers, selectBlossomServers, validateMedia, prepareMediaForUpload, uploadAuthorization, authorizationHeader, uploadMedia, MAX_MEDIA_BYTES } from '../js/blossom.mjs';
 
 const file = new Blob(['image fixture'], { type: 'image/png' });
 const server = 'https://images.example';
@@ -42,6 +42,48 @@ test('rejects empty, oversized and unsupported media', () => {
   assert.throws(() => validateMedia(new Blob([], { type: 'image/png' })), /empty/);
   assert.throws(() => validateMedia({ size: MAX_MEDIA_BYTES + 1, type: 'image/png' }), /100 MiB/);
   assert.throws(() => validateMedia(new Blob(['svg'], { type: 'image/svg+xml' })), /Choose/);
+});
+
+test('strips video metadata and updates last modified date during browser preparation', async () => {
+  const video = new File(['video fixture'], 'recording.mp4', { type: 'video/mp4', lastModified: 1000 });
+  const prepared = await prepareMediaForUpload(video);
+  assert.notEqual(prepared, video);
+  assert.equal(prepared.type, video.type);
+  assert.equal(prepared.name, video.name);
+  assert.equal(prepared.size, video.size);
+  assert.notEqual(prepared.lastModified, 1000);
+});
+
+test('leaves animated GIFs unchanged during browser preparation', async () => {
+  const gif = new Blob(['gif fixture'], { type: 'image/gif' });
+  assert.equal(await prepareMediaForUpload(gif), gif);
+});
+
+test('converts browser-decodable images to webp files without original bytes', async () => {
+  const originalBitmap = globalThis.createImageBitmap;
+  const originalOffscreen = globalThis.OffscreenCanvas;
+  const source = new File(['jpeg with metadata'], 'photo.jpg', { type: 'image/jpeg' });
+  const output = new Blob(['webp pixels only'], { type: 'image/webp' });
+  globalThis.createImageBitmap = async image => ({ width: 3, height: 2, image, close() {} });
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) { this.width = width; this.height = height; }
+    getContext(type) { return type === '2d' ? { drawImage() {} } : null; }
+    async convertToBlob(options) {
+      assert.deepEqual(options, { type: 'image/webp', quality: 0.92 });
+      return output;
+    }
+  };
+  try {
+    const prepared = await prepareMediaForUpload(source);
+    assert.equal(prepared.type, 'image/webp');
+    assert.equal(prepared.name, 'photo.webp');
+    assert.equal(await prepared.text(), 'webp pixels only');
+  } finally {
+    if (originalBitmap === undefined) delete globalThis.createImageBitmap;
+    else globalThis.createImageBitmap = originalBitmap;
+    if (originalOffscreen === undefined) delete globalThis.OffscreenCanvas;
+    else globalThis.OffscreenCanvas = originalOffscreen;
+  }
 });
 
 test('authorization is scoped to the media, server and five-minute expiration', () => {
